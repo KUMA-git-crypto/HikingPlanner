@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+osmnx
+networkx
+geopandas
+shapely
+pydantic
+gunicorn

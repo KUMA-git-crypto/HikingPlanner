@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Hiking Trail Snap - Map UI</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        body { margin: 0; padding: 0; font-family: sans-serif; }
+        #map { height: 100vh; width: 100%; }
+        #controls {
+            position: absolute; top: 10px; right: 10px; z-index: 1000;
+            background: white; padding: 15px; border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2); max-width: 250px;
+        }
+        .info { font-size: 14px; margin-bottom: 10px; }
+        button { cursor: pointer; padding: 8px 12px; width: 100%; background: #007bff; color: white; border: none; border-radius: 4px; }
+        button:disabled { background: #ccc; }
+        h3 { margin-top: 0; font-size: 18px; color: #333; }
+    </style>
+</head>
+<body>
+
+<div id="controls">
+    <h3>登山道ルート生成</h3>
+    <div class="info" id="status">地図をクリックしてスタート地点を選んでください。</div>
+    <button id="undoBtn" style="background: #ffc107; color: #000; margin-bottom:5px;">一つ戻す (Undo)</button>
+    <button id="resetBtn">リセット</button>
+    
+    <div id="waypointList" style="margin-top: 15px; border-top: 1px solid #ccc; padding-top: 10px;">
+        <strong>通過ポイント：</strong>
+        <div id="listItems" style="margin-top:5px; font-size:13px; color:#555;">まだありません</div>
+    </div>
+</div>
+
+<div id="map"></div>
+
+<script>
+    const map = L.map('map').setView([35.3606, 138.7273], 14);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    let startMarker = null;
+    let endMarker = null;
+    let routeLine = null;
+    let nodeLayer = L.layerGroup().addTo(map);
+
+    const statusEl = document.getElementById('status');
+    const resetBtn = document.getElementById('resetBtn');
+
+    // Load nodes and display them
+    const apiKey = "mysecret"; // クラウド環境の環境変数 API_KEY と一致させてください
+
+    async function initNodes() {
+        const nodes = await fetch(`/nodes?api_key=${apiKey}`).then(r => r.json());
+        nodes.forEach(node => {
+            const marker = L.circleMarker([node.lat, node.lon], {
+                radius: 4,
+                fillColor: "white",
+                color: "#333",
+                weight: 1,
+                opacity: 0.8,
+                fillOpacity: 0.8
+            }).addTo(nodeLayer);
+
+            marker.on('click', (e) => {
+                L.DomEvent.stopPropagation(e);
+                handlePointSelection(node.lat, node.lon);
+            });
+        });
+    }
+
+    initNodes();
+
+    map.on('click', async function(e) {
+        handlePointSelection(e.latlng.lat, e.latlng.lng);
+    });
+
+    let waypoints = [];
+    let segments = []; // [{polyline, data}]
+    let alternativeRoutes = []; // Current segment's alternatives
+    const undoBtn = document.getElementById('undoBtn');
+    const listItems = document.getElementById('listItems');
+
+    // Add Export Buttons
+    const exportDiv = document.createElement('div');
+    exportDiv.style.marginTop = "10px";
+    exportDiv.innerHTML = `
+        <button id="gpxBtn" style="background:#28a745; margin-bottom:5px;">GPXで保存</button>
+        <button id="kmlBtn" style="background:#28a745;">KMLで保存</button>
+    `;
+    resetBtn.parentNode.insertBefore(exportDiv, resetBtn.nextSibling);
+
+    async function exportRoute(format) {
+        if (segments.length === 0) {
+            alert("ルートがありません。");
+            return;
+        }
+        
+        const allPoints = [];
+        // Sequential collection of points from all segments
+        segments.forEach((seg, i) => {
+            // Avoid duplicating the junction point between segments
+            const pts = (i === 0) ? seg.data.route : seg.data.route.slice(1);
+            allPoints.push(...pts);
+        });
+
+        const response = await fetch(`/export/${format}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: "My_Hiking_Trip", points: allPoints })
+        });
+        
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `route.${format}`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+    }
+
+    document.getElementById('gpxBtn').onclick = () => exportRoute('gpx');
+    document.getElementById('kmlBtn').onclick = () => exportRoute('kml');
+
+    async function handlePointSelection(lat, lon) {
+        statusEl.innerText = "吸着中...";
+        const snapped = await fetch(`/snap?lat=${lat}&lon=${lon}&api_key=${apiKey}`).then(r => r.json());
+        
+        if (snapped.snapped) {
+            const sPt = { lat: snapped.snapped.lat, lon: snapped.snapped.lon };
+            const label = waypoints.length === 0 ? "スタート" : `地点 ${waypoints.length}`;
+            const marker = L.marker([sPt.lat, sPt.lon]).addTo(map)
+                .bindPopup(label)
+                .openPopup();
+            
+            waypoints.push({ marker, pos: sPt, label });
+            updateSidebar();
+
+            if (waypoints.length >= 2) {
+                const prev = waypoints[waypoints.length - 2].pos;
+                const curr = waypoints[waypoints.length - 1].pos;
+                calculateSegment(prev, curr);
+            } else {
+                statusEl.innerText = "次の地点（目的地）を選んでください。";
+            }
+        }
+    }
+
+    async function calculateSegment(start, end) {
+        statusEl.innerText = "ルート計算中...";
+        const res = await fetch(`/route?start_lat=${start.lat}&start_lon=${start.lon}&end_lat=${end.lat}&end_lon=${end.lon}&api_key=${apiKey}`)
+            .then(r => r.json());
+        
+        if (res.alternatives && res.alternatives.length > 0) {
+            alternativeRoutes = res.alternatives;
+            currentRouteIndex = 0;
+            displayNewSegment(0);
+            updateStatusWithAlternatives();
+        } else {
+            statusEl.innerText = "ルートが見つかりませんでした。";
+            undoLast();
+        }
+    }
+
+    function displayNewSegment(index) {
+        if (segments.length >= waypoints.length - 1 && segments.length > 0) {
+             const lastSeg = segments.pop();
+             map.removeLayer(lastSeg.polyline);
+        }
+
+        const route = alternativeRoutes[index];
+        const latlngs = route.route.map(p => [p.lat, p.lon]);
+        const polyline = L.polyline(latlngs, {
+            color: index === 0 ? 'blue' : (index === 1 ? 'green' : 'orange'),
+            weight: 5, 
+            opacity: 0.8
+        }).addTo(map);
+        
+        segments.push({ polyline, data: route, altIndex: index });
+        updateSidebar();
+    }
+
+    function updateSidebar() {
+        if (waypoints.length === 0) {
+            listItems.innerHTML = "まだありません";
+            return;
+        }
+        
+        let html = "<ul style='padding-left:15px; margin:5px 0;'>";
+        waypoints.forEach((wp, i) => {
+            html += `<li><strong>${wp.label}</strong></li>`;
+            if (segments[i]) {
+                const trails = segments[i].data.trail_names.join(" → ");
+                html += `<div style='font-size:11px; color:#007bff; border-left:2px solid #007bff; padding-left:5px; margin:2px 0 5px 5px;'>${trails}</div>`;
+            }
+        });
+        html += "</ul>";
+        listItems.innerHTML = html;
+    }
+
+    function updateStatusWithAlternatives() {
+        statusEl.innerHTML = `地点 ${waypoints.length-1} → ${waypoints.length} のルートを選んでください<br>` +
+            `<button id="nextRoute" style="margin-top:5px; background:#28a745">別の候補を表示</button>`;
+        
+        document.getElementById('nextRoute').onclick = () => {
+            currentRouteIndex = (currentRouteIndex + 1) % alternativeRoutes.length;
+            displayNewSegment(currentRouteIndex);
+            updateStatusWithAlternatives();
+        };
+    }
+
+    function undoLast() {
+        if (waypoints.length > 0) {
+            const lastWp = waypoints.pop();
+            map.removeLayer(lastWp.marker);
+        }
+        if (segments.length > 0) {
+            const lastSeg = segments.pop();
+            map.removeLayer(lastSeg.polyline);
+        }
+        updateSidebar();
+        
+        if (waypoints.length >= 2) {
+            statusEl.innerText = "消去しました。";
+        } else if (waypoints.length === 1) {
+            statusEl.innerText = "スタート地点のみの状態です。";
+        } else {
+            statusEl.innerText = "地点を選んでください。";
+        }
+        alternativeRoutes = [];
+    }
+
+    undoBtn.onclick = undoLast;
+
+    resetBtn.onclick = () => {
+        waypoints.forEach(w => map.removeLayer(w.marker));
+        segments.forEach(s => map.removeLayer(s.polyline));
+        waypoints = []; segments = []; alternativeRoutes = [];
+        updateSidebar();
+        statusEl.innerText = "スタート地点を選んでください。";
+    };
+</script>
+
+</body>
+</html>
