@@ -18,6 +18,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Global variables for the graph
 G = None
+G_simple = None
 
 # Models for Export
 class RoutePoint(BaseModel):
@@ -38,7 +39,7 @@ async def verify_api_key(api_key: Optional[str] = Query(None)):
 
 @app.on_event("startup")
 def startup_event():
-    global G
+    global G, G_simple
     print("----------------------------------------")
     print("Initializing Hiking Trail Snap API...")
     graph_path = "data/sample_fuji.graphml"
@@ -48,6 +49,19 @@ def startup_event():
             print(f"Loading graph from {graph_path}...")
             G = ox.load_graphml(graph_path)
             print(f"Graph loaded successfully: {len(G.nodes)} nodes, {len(G.edges)} edges.")
+            
+            # Pre-calculate simplified graph for routing to save memory during requests
+            print("Pre-calculating simplified DiGraph...")
+            G_simple = nx.DiGraph()
+            for u, v, k, d in G.edges(keys=True, data=True):
+                w = get_edge_weight(u, v, d)
+                if G_simple.has_edge(u, v):
+                    if w < G_simple[u][v]['weight']:
+                        G_simple[u][v]['weight'] = w
+                        G_simple[u][v]['data'] = d
+                else:
+                    G_simple.add_edge(u, v, weight=w, data=d)
+            print("G_simple ready.")
         except Exception as e:
             print(f"CRITICAL ERROR loading graph: {e}")
     else:
@@ -135,17 +149,9 @@ async def route_points(start_lat: float, start_lon: float, end_lat: float, end_l
         orig_node = ox.distance.nearest_nodes(G, start_lon, start_lat)
         dest_node = ox.distance.nearest_nodes(G, end_lon, end_lat)
         
-        # 2. Create a simple DiGraph for shortest_simple_paths compatibility
-        # (MultiGraphs are not supported by this algorithm)
-        G_simple = nx.DiGraph()
-        for u, v, k, d in G.edges(keys=True, data=True):
-            w = get_edge_weight(u, v, d)
-            if G_simple.has_edge(u, v):
-                if w < G_simple[u][v]['weight']:
-                    G_simple[u][v]['weight'] = w
-                    G_simple[u][v]['data'] = d
-            else:
-                G_simple.add_edge(u, v, weight=w, data=d)
+        # 2. Check for pre-calculated graph
+        if G_simple is None:
+             raise HTTPException(status_code=503, detail="Routing graph not ready")
         
         # 3. Calculate paths
         import itertools
