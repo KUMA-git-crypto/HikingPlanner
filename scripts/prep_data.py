@@ -8,8 +8,8 @@ import math
 import argparse
 
 CUSTOM_FILTER = '[\"highway\"~\"path|footway|track|steps|service|corridor|pedestrian\"]'
-DOWNLOAD_RADIUS_M = 15000  # 15km radius per tile
-TILE_GRID = 0.25           # 0.25 degree grid (~27km x 20km)
+DOWNLOAD_RADIUS_M = 6000  # 15km radius per tile                     15000→6000
+TILE_GRID = 0.1           # 0.25 degree grid (~27km x 20km)          0.25→1
 DATA_DIR = "data"
 
 
@@ -49,7 +49,7 @@ def download_area(lat: float, lon: float, on_progress=None) -> str:
         dist=DOWNLOAD_RADIUS_M,
         network_type="all",
         custom_filter=CUSTOM_FILTER,
-        simplify=False
+        simplify=True                                #False→True
     )
     ox.save_graphml(G, filepath=filepath)
 
