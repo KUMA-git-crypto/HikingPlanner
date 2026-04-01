@@ -70,22 +70,41 @@
 </head>
 <body>
 <div id="controls">
-    <h3>⛰️ 登山道ルートプランナー</h3>
-    <div id="loadingBar"></div>
-    <div class="info" id="status">地図を移動して「この付近を取得」を押してください。</div>
-    <button id="fetchBtn" onclick="fetchCurrentArea()">📥 この付近の登山道を取得</button>
-    <div class="btn-group">
-        <button id="undoBtn" onclick="undoLast()">↩️ 戻す</button>
-        <button id="resetBtn" onclick="resetAll()">🗑️ クリア</button>
-        <button id="gpxBtn" onclick="exportRoute('gpx')">⬇️ GPX</button>
-        <button id="kmlBtn" onclick="exportRoute('kml')">⬇️ KML</button>
+    <!-- SEARCH PHASE -->
+    <div id="searchPhase">
+        <h3>⛰️ 登山エリアを探す</h3>
+        <div style="display:flex; gap:5px; margin-bottom:8px;">
+            <input id="searchInput" type="text" placeholder="例: 富士山, 八ヶ岳..." style="flex:1; padding:8px; border:1px solid #ccc; border-radius:4px;">
+            <button onclick="searchLocation()" style="width:auto; margin:0; background:#4CAF50; padding:8px 12px;">🔍</button>
+        </div>
+        <div class="info" id="status">山名などで検索するか、地図を移動して「取得」を押してください。</div>
+        <div id="loadingBar"></div>
+        <button id="fetchBtn" onclick="fetchCurrentArea()">📥 この付近の登山道を取得</button>
+        <div class="radius-row" style="margin-top:8px; border-top:1px solid #eee; padding-top:6px; display:flex; align-items:center; gap:6px; font-size:12px;">
+            <span>範囲:</span>
+            <input id="radiusSlider" type="range" min="3" max="25" value="7" style="flex:1">
+            <span id="radiusLabel" style="min-width:32px">7km</span>
+        </div>
     </div>
-    <!-- Waypoint list removed as per user request (redundant without names) -->
-    <div id="waypointList" style="display:none"></div>
-    <div class="radius-row" style="margin-top:8px; border-top:1px solid #eee; padding-top:6px; display:flex; align-items:center; gap:6px; font-size:12px;">
-        <span>半径:</span>
-        <input id="radiusSlider" type="range" min="3" max="20" value="7" style="flex:1">
-        <span id="radiusLabel" style="min-width:32px">7km</span>
+
+    <!-- ROUTE PHASE (hidden by default) -->
+    <div id="routePhase" style="display:none">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <h3 style="margin:0">📍 ルート作成</h3>
+            <button onclick="switchMode('search')" style="width:auto; margin:0; background:#eee; color:#333; padding:4px 8px; font-size:10px;">← 検索へ戻る</button>
+        </div>
+        <div style="margin-bottom:8px;">
+            <input id="routeNameInput" type="text" placeholder="ルート名" style="width:100%; padding:6px; border:1px solid #ccc; border-radius:4px; font-size:12px;">
+        </div>
+        <div class="btn-group">
+            <button id="undoBtn" onclick="undoLast()">↩️ 戻す</button>
+            <button id="resetBtn" onclick="resetAll()">🗑️ クリア</button>
+            <button id="gpxBtn" onclick="exportRoute('gpx')">⬇️ GPX</button>
+            <button id="kmlBtn" onclick="exportRoute('kml')">⬇️ KML</button>
+        </div>
+        <div class="info" id="routeStatus" style="margin-top:8px; border-top:1px solid #eee; padding-top:6px;">
+            白丸（分岐）または青丸（登山口）を選んでください。
+        </div>
     </div>
 </div>
 
@@ -161,15 +180,15 @@ let renderedEdges = new Set();
 let renderedNodes = new Set(); // Store ID of already placed circle markers
 
 function mergeTrailData(data) {
-    // All nodes go into graphNodes for Dijkstra (routing needs intermediate nodes)
+    // All nodes go into graphNodes for Dijkstra
     for (const [id, pos] of Object.entries(data.n)) { graphNodes[id] = pos; }
     for (const e of data.e) {
         if (!graphEdges[e.u]) graphEdges[e.u] = [];
         graphEdges[e.u].push({ to: e.v, dist: e.d });
     }
+
     // Render edges
     for (const e of data.e) {
-        // Use a composite key to avoid redrawing the same physical segment
         const key = [e.u, e.v].sort().join('-');
         if (renderedEdges.has(key)) continue;
         renderedEdges.add(key);
@@ -186,15 +205,22 @@ function mergeTrailData(data) {
             }).addTo(edgeLayer);
         }
     }
-    // Only show circles at junction/endpoint nodes (from server's `jn` list)
+
+    // Junctions (white) and Trailheads (Blue)
     const junctionSet = new Set(data.jn || []);
+    const trailheadSet = new Set(data.th || []);
+    
     for (const [id, pos] of Object.entries(data.n)) {
-        if (!junctionSet.has(id)) continue; 
-        if (renderedNodes.has(id)) continue; // Optimization: don't redraw existing markers
+        const isTH = trailheadSet.has(id);
+        const isJN = junctionSet.has(id);
+        if (!isTH && !isJN) continue; 
+        if (renderedNodes.has(id)) continue;
         renderedNodes.add(id);
 
         const marker = L.circleMarker([pos[0], pos[1]], {
-            radius: 7, fillColor: 'white', color: '#333',
+            radius: isTH ? 8 : 6, 
+            fillColor: isTH ? '#2196F3' : 'white', 
+            color: '#333',
             weight: 2, opacity: 0.9, fillOpacity: 0.95
         });
         marker.on('click', (ev) => {
@@ -205,7 +231,42 @@ function mergeTrailData(data) {
     }
 }
 
+// ─── SEARCH & MODE SWITCH ───────────────────────────────────────────────────
+let currentPeakName = "";
 
+async function searchLocation() {
+    const q = document.getElementById('searchInput').value;
+    if (!q) return;
+    statusEl.textContent = `${q} を検索中...`;
+    try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`);
+        const data = await res.json();
+        if (data && data.length > 0) {
+            const result = data[0];
+            map.setView([result.lat, result.lon], 14);
+            currentPeakName = result.display_name.split(',')[0];
+            document.getElementById('routeNameInput').value = currentPeakName + "ルート";
+            statusEl.textContent = `「${currentPeakName}」が見つかりました。`;
+        } else {
+            statusEl.textContent = "場所が見つかりませんでした。";
+        }
+    } catch (e) {
+        statusEl.textContent = "検索エラーです。";
+    }
+}
+
+function switchMode(mode) {
+    document.getElementById('searchPhase').style.display = mode === 'search' ? 'block' : 'none';
+    document.getElementById('routePhase').style.display = mode === 'route' ? 'block' : 'none';
+    if (mode === 'search') {
+        resetAll();
+        edgeLayer.clearLayers();
+        nodeLayer.clearLayers();
+        renderedEdges.clear();
+        renderedNodes.clear();
+        graphNodes = {}; graphEdges = {};
+    }
+}
 
 // ─── AREA FETCHING ────────────────────────────────────────────────────────────
 async function fetchCurrentArea() {
@@ -222,22 +283,15 @@ async function fetchCurrentArea() {
         if (!res.ok) { const err = await res.json(); throw new Error(err.detail || `HTTP ${res.status}`); }
         const data = await res.json();
         mergeTrailData(data);
-        const nc = Object.keys(data.n).length;
+        switchMode('route'); // Switch to route mode after fetch
         const ec = data.e.filter(e => e.t === 0).length;
-        statusEl.textContent = `取得完了！ 分岐点: ${nc}, 道の区間: ${ec}　白丸をクリックしてください。`;
+        document.getElementById('routeStatus').textContent = `取得完了！ 道の数: ${ec}。青丸（登山口）を選んで開始。`;
     } catch (e) {
         statusEl.textContent = 'エラー: ' + e.message;
     } finally {
         btn.disabled = false;
         loadingBar.classList.remove('active');
     }
-}
-
-function updateAreaBadges() {
-    const container = document.getElementById('areaBadges');
-    container.innerHTML = loadedBBoxes.map((b, i) =>
-        `<span class="area-badge">エリア ${i+1}</span>`
-    ).join('');
 }
 
 // ─── MIN-HEAP DIJKSTRA ────────────────────────────────────────────────────────
@@ -323,7 +377,7 @@ function handleNodeClick(id, lat, lon) {
         const curr = waypoints[waypoints.length - 1];
         drawRoute(prev, curr);
     } else {
-        statusEl.textContent = '次の地点（目的地）を選んでください。';
+        document.getElementById('routeStatus').textContent = '次の地点を選んでください。';
     }
 }
 
@@ -351,9 +405,10 @@ function drawRoute(from, to) {
         }
     }
 
-    if (paths.length === 0) {
-        statusEl.textContent = 'ルートが見つかりませんでした。';
-        undoLast(); return;
+    if (!paths || paths.length === 0) {
+        document.getElementById('routeStatus').textContent = 'ルートが見つかりませんでした。';
+        undoLast();
+        return;
     }
 
     // Render alternatives
@@ -415,7 +470,8 @@ function selectAlternative(idx, isInitial = false) {
         return sum + haversine(p1[0], p1[1], p2[0], p2[1]);
     }, 0);
 
-    statusEl.textContent = `ルート${idx+1}を選択中 (距離: ${(totalDist/1000).toFixed(2)}km)。別の線をクリックで切替可。`;
+    const distText = `ルート${idx+1}を選択中(${(totalDist/1000).toFixed(2)}km)。別の線クリックで切替可。`;
+    document.getElementById('routeStatus').textContent = distText;
     updateSidebar();
 }
 
@@ -467,16 +523,17 @@ async function exportRoute(format) {
     routeLines.forEach(line => {
         line.getLatLngs().forEach(ll => allPoints.push({ lat: ll.lat, lon: ll.lng }));
     });
+    const fileName = document.getElementById('routeNameInput').value || 'HikingRoute';
     const res = await fetch(`/export/${format}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'HikingRoute', points: allPoints })
+        body: JSON.stringify({ name: fileName, points: allPoints })
     });
     if (!res.ok) { alert('保存に失敗しました。'); return; }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `route.${format}`;
+    a.href = url; a.download = `${fileName}.${format}`;
     document.body.appendChild(a); a.click();
     setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
 }

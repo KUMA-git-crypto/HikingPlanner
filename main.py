@@ -72,21 +72,36 @@ def build_trail_data(osm_json: dict) -> dict:
         elif el["type"] == "way":
             ways.append(el)
 
-    # 2. Second pass: Calculate junction nodes
-    way_count = {}
+    # 2. Second pass: Calculate junction nodes and trailhead types
+    way_count = {} # nid -> total ways
+    way_types = {} # nid -> set of types (0=hiking, 1=connector)
     endpoint_set = set()
     for w in ways:
         w_nodes = w.get("nodes", [])
         if not w_nodes: continue
         endpoint_set.add(str(w_nodes[0]))
         endpoint_set.add(str(w_nodes[-1]))
+        
+        highway = w.get("tags", {}).get("highway", "path")
+        w_type = 1 if highway in ("service", "unclassified", "residential") else 0
+        
         seen = set()
         for nid in w_nodes:
             snid = str(nid)
+            # Track types intersecting at this node
+            if snid not in way_types: way_types[snid] = set()
+            way_types[snid].add(w_type)
+
             if snid not in seen:
                 way_count[snid] = way_count.get(snid, 0) + 1
                 seen.add(snid)
 
+    # Trailheads are nodes where a hiking way (0) meets a connector way (1)
+    trailhead_ids = set(
+        nid for nid, types in way_types.items() 
+        if 0 in types and 1 in types
+    )
+    
     junction_ids = set(nid for nid, cnt in way_count.items() if cnt >= 2) | endpoint_set
 
     # 3. Third pass: Build edges
@@ -120,8 +135,14 @@ def build_trail_data(osm_json: dict) -> dict:
     referenced = {e["u"] for e in edges} | {e["v"] for e in edges}
     filtered_nodes = {nid: nodes[nid] for nid in referenced if nid in nodes}
     junctions = {nid for nid in junction_ids if nid in referenced}
+    trailheads = {nid for nid in trailhead_ids if nid in referenced}
 
-    return {"n": filtered_nodes, "jn": list(junctions), "e": edges}
+    return {
+        "n": filtered_nodes, 
+        "jn": list(junctions), 
+        "th": list(trailheads),
+        "e": edges
+    }
 
 
 @app.get("/")
