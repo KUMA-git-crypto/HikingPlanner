@@ -208,11 +208,14 @@
     }
 
     async function initAreaAndMap() {
-        // Load initial area (server already loaded Fuji on startup)
         const status = await fetch('/area/status').then(r => r.json());
         if (status.status === 'ready') {
             currentAreaKey = status.tile_key;
             await loadAreaData();
+        } else {
+            // No area loaded yet - trigger request for current map center
+            const center = map.getCenter();
+            requestArea(center.lat, center.lng);
         }
     }
 
@@ -321,7 +324,9 @@
         statusEl.innerText = "吸着中...";
         try {
             const snapped = await fetch(`/snap?lat=${lat}&lon=${lon}&api_key=${apiKey}`).then(r => {
-                if (!r.ok) throw new Error("API Key エラーまたはサーバーエラー");
+                if (r.status === 403) throw new Error("APIキーが一致しません。Renderの環境変数を確認してください。");
+                if (r.status === 503) throw new Error("サーバーで登山道データを準備中です。30秒ほどお待ちください。");
+                if (!r.ok) throw new Error("サーバーエラーが発生しました(" + r.status + ")");
                 return r.json();
             });
             

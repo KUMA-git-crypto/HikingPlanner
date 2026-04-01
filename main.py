@@ -24,6 +24,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Global graph state
 G = None
+G_simplified = None  # Cached simplified version for UI (edges)
 main_scc_nodes = None  # Set of node IDs in the main strongly-connected component
 
 # Area loading state (used by /area endpoint)
@@ -47,21 +48,31 @@ class ExportData(BaseModel):
 API_KEY_ENV = os.getenv("API_KEY")
 
 async def verify_api_key(api_key: Optional[str] = Query(None)):
-    if API_KEY_ENV and api_key != API_KEY_ENV:
+    # If no API_KEY is set in environment, allow all requests
+    if not API_KEY_ENV:
+        return api_key
+    # Otherwise, require a match
+    if api_key != API_KEY_ENV:
         raise HTTPException(status_code=403, detail="Forbidden: Invalid API Key")
     return api_key
 
 def load_graph_from_file(graph_path: str):
-    """Load a graphml file into the global G/main_scc_nodes. Returns True on success."""
-    global G, main_scc_nodes
+    """Load a graphml file into the global variables. Returns True on success."""
+    global G, G_simplified, main_scc_nodes
     print(f"Loading graph from {graph_path}...")
     g = ox.load_graphml(graph_path)
-    print(f"Graph loaded: {len(g.nodes)} nodes, {len(g.edges)} edges.")
+    print(f"Graph loaded: {len(g.nodes)} nodes. Computing SCC and simplifying...")
+    
     scc_list = sorted(nx.strongly_connected_components(g), key=len, reverse=True)
     scc = scc_list[0]
-    print(f"Main SCC: {len(scc)} nodes ({len(g.nodes)-len(scc)} isolated nodes excluded).")
+    
+    # Pre-simplify the graph for the UI to save RAM during /edges calls
+    g_simp = ox.simplify_graph(g)
+    
     G = g
+    G_simplified = g_simp
     main_scc_nodes = scc
+    print(f"Graph ready. Nodes: {len(G.nodes)}, Simplified Edges: {len(G_simplified.edges)}")
     return True
 
 
@@ -329,7 +340,7 @@ async def export_kml(data: ExportData):
 @app.get("/nodes")
 def get_nodes(api_key: str = Depends(verify_api_key)):
     if G is None:
-        raise HTTPException(status_code=503, detail="Graph not initialized")
+        return []
     
     nodes_data = []
     # A "through" node on any trail (oneway or bidirectional) has exactly 2
@@ -347,11 +358,13 @@ def get_nodes(api_key: str = Depends(verify_api_key)):
 @app.get("/edges")
 def get_edges(api_key: str = Depends(verify_api_key)):
     if G is None:
-        raise HTTPException(status_code=503, detail="Graph not initialized")
+        return []
     
-    # PERFORMANCE: For the UI edge background, we simplify the graph locally 
-    # so we don't send 57,000 tiny segments. This doesn't affect routing.
-    G_view = ox.simplify_graph(G)
+    # PERFORMANCE: Use the pre-calculated simplified graph
+    G_view = G_simplified
+    
+    if G_view is None:
+        return []
     
     edges_data = []
     for u, v, k, d in G_view.edges(keys=True, data=True):
