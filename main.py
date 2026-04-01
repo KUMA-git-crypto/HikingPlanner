@@ -63,16 +63,20 @@ def load_graph_from_file(graph_path: str):
     g = ox.load_graphml(graph_path)
     print(f"Graph loaded: {len(g.nodes)} nodes. Computing SCC and simplifying...")
     
-    scc_list = sorted(nx.strongly_connected_components(g), key=len, reverse=True)
-    scc = scc_list[0]
+#    scc_list = sorted(nx.strongly_connected_components(g), key=len, reverse=True)
+#    scc = scc_list[0]
     
     # Pre-simplify the graph for the UI to save RAM during /edges calls
-    g_simp = ox.simplify_graph(g)
+#    g_simp = ox.simplify_graph(g)
     
     G = g
-    G_simplified = g_simp
-    main_scc_nodes = scc
-    print(f"Graph ready. Nodes: {len(G.nodes)}, Simplified Edges: {len(G_simplified.edges)}")
+##    G_simplified = g_simp
+    G_simplified = g
+##    main_scc_nodes = scc
+    main_scc_nodes = set(g.nodes()) 
+    
+##    print(f"Graph ready. Nodes: {len(G.nodes)}, Simplified Edges: {len(G_simplified.edges)}")
+    print(f"Graph ready. Nodes: {len(G.nodes)}")
     return True
 
 
