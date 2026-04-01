@@ -82,6 +82,9 @@ def load_graph_from_file(graph_path: str):
 
 @app.on_event("startup")
 def startup_event():
+    # 起動時に一度だけ data フォルダを丸ごと削除して掃除する
+    if os.path.exists("data"):
+        shutil.rmtree("data")
     # Try legacy fuji file first, then look for a tile file
     candidates = [
         "data/sample_fuji.graphml",
