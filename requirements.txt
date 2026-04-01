@@ -6,4 +6,3 @@ geopandas
 shapely
 pydantic
 gunicorn
-scikit-learn

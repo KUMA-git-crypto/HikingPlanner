@@ -10,15 +10,29 @@ import uvicorn
 import itertools
 import os
 import traceback
+import threading
+import sys
+
+# Add scripts dir to path so we can import prep_data
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'scripts'))
+from prep_data import download_area, tile_key, tile_filename
 
 app = FastAPI(title="Hiking Trail Snap API")
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Global variables for the graph
+# Global graph state
 G = None
-G_simple = None
+main_scc_nodes = None  # Set of node IDs in the main strongly-connected component
+
+# Area loading state (used by /area endpoint)
+area_status = {
+    "tile_key": None,
+    "status": "idle",   # idle | loading | ready | error
+    "message": ""
+}
+_area_lock = threading.Lock()
 
 # Models for Export
 class RoutePoint(BaseModel):
@@ -37,39 +51,50 @@ async def verify_api_key(api_key: Optional[str] = Query(None)):
         raise HTTPException(status_code=403, detail="Forbidden: Invalid API Key")
     return api_key
 
+def load_graph_from_file(graph_path: str):
+    """Load a graphml file into the global G/main_scc_nodes. Returns True on success."""
+    global G, main_scc_nodes
+    print(f"Loading graph from {graph_path}...")
+    g = ox.load_graphml(graph_path)
+    print(f"Graph loaded: {len(g.nodes)} nodes, {len(g.edges)} edges.")
+    scc_list = sorted(nx.strongly_connected_components(g), key=len, reverse=True)
+    scc = scc_list[0]
+    print(f"Main SCC: {len(scc)} nodes ({len(g.nodes)-len(scc)} isolated nodes excluded).")
+    G = g
+    main_scc_nodes = scc
+    return True
+
+
 @app.on_event("startup")
 def startup_event():
-    global G, G_simple
-    print("----------------------------------------")
-    print("Initializing Hiking Trail Snap API...")
-    graph_path = "data/sample_fuji.graphml"
-    if os.path.exists(graph_path):
-        print(f"DEBUG: Found graph file at {graph_path}")
-        try:
-            print(f"Loading graph from {graph_path}...")
-            G = ox.load_graphml(graph_path)
-            print(f"Graph loaded successfully: {len(G.nodes)} nodes, {len(G.edges)} edges.")
-            
-            # Pre-calculate simplified graph for routing to save memory during requests
-            print("Pre-calculating simplified DiGraph...")
-            G_simple = nx.DiGraph()
-            for u, v, k, d in G.edges(keys=True, data=True):
-                w = get_edge_weight(u, v, d)
-                if G_simple.has_edge(u, v):
-                    if w < G_simple[u][v]['weight']:
-                        G_simple[u][v]['weight'] = w
-                        G_simple[u][v]['data'] = d
-                else:
-                    G_simple.add_edge(u, v, weight=w, data=d)
-            print("G_simple ready.")
-        except Exception as e:
-            print(f"CRITICAL ERROR loading graph: {e}")
-    else:
-        print(f"WARNING: Graph file NOT FOUND at {graph_path}")
+    # Try legacy fuji file first, then look for a tile file
+    candidates = [
+        "data/sample_fuji.graphml",
+        tile_filename(*tile_key(35.3606, 138.7273)),
+    ]
+    for graph_path in candidates:
+        if os.path.exists(graph_path):
+            try:
+                load_graph_from_file(graph_path)
+                t_lat, t_lon = tile_key(35.3606, 138.7273)
+                area_status["tile_key"] = f"{t_lat:.2f}_{t_lon:.2f}"
+                area_status["status"] = "ready"
+                area_status["message"] = f"Loaded {graph_path}"
+            except Exception as e:
+                print(f"CRITICAL ERROR loading graph: {e}")
+                traceback.print_exc()
+                area_status["status"] = "error"
+                area_status["message"] = str(e)
+            return
+    print("WARNING: No default graph found. Area must be requested via /area endpoint.")
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "graph_loaded": G is not None}
+    return {
+        "status": "ok",
+        "graph_loaded": G is not None,
+        "area": area_status
+    }
 
 @app.get("/")
 def read_root():
@@ -77,62 +102,111 @@ def read_root():
         "status": "online", 
         "message": "Hiking Trail Snap API is running",
         "features": {
+            "area": "/area?lat=35.3606&lon=138.7273",
             "snap": "/snap?lat=35.3606&lon=138.7273",
             "route": "/route?start_lat=35.3606&start_lon=138.7273&end_lat=35.3644&end_lon=138.7307"
         }
     }
 
+@app.get("/area/status")
+def get_area_status():
+    """Poll this to check if the area is ready after calling /area."""
+    return area_status
+
+@app.get("/area")
+def load_area(lat: float, lon: float, api_key: str = Depends(verify_api_key)):
+    """
+    Request the server to load trail data for the area containing (lat, lon).
+    If data is not cached, downloads it from OSM in the background.
+    Returns immediately with status=loading or status=ready.
+    """
+    t_lat, t_lon = tile_key(lat, lon)
+    new_key = f"{t_lat:.2f}_{t_lon:.2f}"
+
+    with _area_lock:
+        # Already loaded or loading this tile
+        if area_status["tile_key"] == new_key:
+            return area_status
+
+        # New tile requested — start background download
+        area_status["tile_key"] = new_key
+        area_status["status"] = "loading"
+        area_status["message"] = f"Preparing tile ({t_lat:.2f}, {t_lon:.2f})..."
+
+    def _bg_load():
+        try:
+            def progress(msg):
+                area_status["message"] = msg
+                print(msg)
+
+            filepath = download_area(lat, lon, on_progress=progress)
+            area_status["message"] = "Loading graph into memory..."
+            load_graph_from_file(filepath)
+            with _area_lock:
+                area_status["status"] = "ready"
+                area_status["message"] = f"Ready: {len(G.nodes)} nodes."
+        except Exception as e:
+            with _area_lock:
+                area_status["status"] = "error"
+                area_status["message"] = str(e)
+            traceback.print_exc()
+
+    t = threading.Thread(target=_bg_load, daemon=True)
+    t.start()
+    return area_status
+
 @app.get("/snap")
 async def snap_point(lat: float, lon: float, api_key: str = Depends(verify_api_key)):
-    if G is None:
-        raise HTTPException(status_code=503, detail="Graph not initialized. Run data prep first.")
+    if G is None or main_scc_nodes is None:
+        raise HTTPException(status_code=503, detail="Graph not initialized.")
     
     try:
-        # Find nearest edge (more precise than nearest node)
-        # nearest_edges returns (u, v, key)
-        u, v, k = ox.distance.nearest_edges(G, lon, lat)
-        edge_data = G.get_edge_data(u, v, k)
+        # Build a view of G restricted to the main SCC so snapping never hits
+        # an isolated node that can't participate in routing.
+        G_scc = G.subgraph(main_scc_nodes)
         
-        # Get the geometry of the edge
-        # If 'geometry' key doesn't exist, it's a straight line between nodes
-        if 'geometry' in edge_data:
-            edge_geom = edge_data['geometry']
-        else:
-            from shapely.geometry import LineString
-            u_data = G.nodes[u]
-            v_data = G.nodes[v]
-            edge_geom = LineString([(u_data['x'], u_data['y']), (v_data['x'], v_data['y'])])
-        
-        # Find the point on the edge nearest to the input (lon, lat)
-        point = Point(lon, lat)
-        # Use project and interpolate for exact snapping
-        snapped_dist = edge_geom.project(point)
-        snapped_point = edge_geom.interpolate(snapped_dist)
+        # Find nearest node inside the main SCC
+        nearest = ox.distance.nearest_nodes(G_scc, lon, lat)
+        node_data = G.nodes[nearest]
         
         return {
             "input": {"lat": lat, "lon": lon},
             "snapped": {
-                "lat": snapped_point.y,
-                "lon": snapped_point.x,
-                "edge_nodes": [int(u), int(v)]
+                "lat": node_data['y'],
+                "lon": node_data['x'],
+                "node_id": int(nearest)
             },
-            "distance_m": ox.distance.great_circle(lat, lon, snapped_point.y, snapped_point.x)
+            "distance_m": ox.distance.great_circle(lat, lon, node_data['y'], node_data['x'])
         }
     except Exception as e:
-        import traceback
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
-def get_edge_weight(u, v, d):
-    # Base weight is 'length'
+def get_edge_weight(u, v, d, G_local):
+    """
+    Calculate weight based on distance, hiker-friendliness, and direction.
+    """
     length = d.get('length', 1.0)
     highway = d.get('highway', '')
     access = d.get('access', '')
     
+    # Multiplier for the edge
     multiplier = 1.0
-    # Penalty for bulldozer-like roads (track)
-    if highway == 'track' or (isinstance(highway, list) and 'track' in highway):
-        multiplier *= 2.0
+    
+    u_data = G_local.nodes[u]
+    v_data = G_local.nodes[v]
+    # In Mt. Fuji area, latitude (y) is a good proxy for elevation. 
+    # Center is high (35.36), periphery is low (35.31).
+    # Going TOWARDS the center (35.36) is ASCENT.
+    dist_u = abs(u_data['y'] - 35.3606)
+    dist_v = abs(v_data['y'] - 35.3606)
+    
+    is_ascending = dist_v < dist_u 
+    
+    # Bonus for actual paths and steps
+    if highway in ['path', 'steps'] or (isinstance(highway, list) and any(h in ['path', 'steps'] for h in highway)):
+        multiplier *= 0.8 # Stronger bonus for hiker paths
+        
     # Heavy penalty for restricted access
     if access in ['private', 'no']:
         multiplier *= 10.0
@@ -145,54 +219,73 @@ async def route_points(start_lat: float, start_lon: float, end_lat: float, end_l
         raise HTTPException(status_code=503, detail="Graph not initialized")
     
     try:
-        # 1. Snap start and end points
-        orig_node = ox.distance.nearest_nodes(G, start_lon, start_lat)
-        dest_node = ox.distance.nearest_nodes(G, end_lon, end_lat)
+        # 1. Snap start and end to nearest node in main SCC
+        G_scc = G.subgraph(main_scc_nodes)
+        orig_node = ox.distance.nearest_nodes(G_scc, start_lon, start_lat)
+        dest_node = ox.distance.nearest_nodes(G_scc, end_lon, end_lat)
         
-        # 2. Check for pre-calculated graph
-        if G_simple is None:
-             raise HTTPException(status_code=503, detail="Routing graph not ready")
+        if orig_node == dest_node:
+            raise HTTPException(status_code=400, detail="Start and end are the same point")
         
-        # 3. Calculate paths
-        import itertools
-        path_generator = nx.shortest_simple_paths(G_simple, orig_node, dest_node, weight='weight')
+        # 2. Find shortest path using A*.
+        # For heuristic, use great-circle distance between node positions.
+        def heuristic(u, v):
+            u_d = G.nodes[u]
+            v_d = G.nodes[v]
+            return ox.distance.great_circle(u_d['y'], u_d['x'], v_d['y'], v_d['x'])
         
-        results = []
-        for path in itertools.islice(path_generator, max_routes):
-            route_coords = []
-            names_seen = []
-            for i in range(len(path) - 1):
-                u, v = path[i], path[i+1]
-                edge_data = G_simple[u][v]['data']
-                
-                # Collect trail names
-                e_name = edge_data.get('name', 'Unnamed Trail')
-                if isinstance(e_name, list): e_name = ", ".join(e_name)
-                if not names_seen or names_seen[-1] != e_name:
-                    names_seen.append(e_name)
+        # For MultiDiGraph, weight must be a function (u, v, edge_data_dict)
+        # edge_data_dict is a mapping of key -> data for all parallel edges.
+        def weight_fn(u, v, edge_dict):
+            # edge_dict is {key: {data}} for MultiDiGraph
+            best = min(edge_dict.values(), key=lambda d: get_edge_weight(u, v, d, G))
+            return get_edge_weight(u, v, best, G)
+        
+        path = nx.astar_path(G, orig_node, dest_node, heuristic=heuristic, weight=weight_fn)
+        
+        route_coords = []
+        names_seen = []
+        for i in range(len(path) - 1):
+            u, v = path[i], path[i+1]
+            edges = G.get_edge_data(u, v)
+            if not edges:
+                continue
+            best_edge = min(edges.values(), key=lambda d: get_edge_weight(u, v, d, G))
+            
+            e_name = best_edge.get('name', 'Unnamed Trail')
+            if isinstance(e_name, list):
+                e_name = ", ".join(e_name)
+            if not names_seen or names_seen[-1] != e_name:
+                names_seen.append(e_name)
 
-                if 'geometry' in edge_data:
-                    for x, y in list(edge_data['geometry'].coords)[:-1]:
-                        route_coords.append({"lat": y, "lon": x})
-                else:
-                    u_data = G.nodes[u]
-                    route_coords.append({"lat": u_data['y'], "lon": u_data['x']})
-            
-            last_node = G.nodes[path[-1]]
-            route_coords.append({"lat": last_node['y'], "lon": last_node['x']})
-            
-            results.append({
-                "node_count": len(path),
-                "trail_names": names_seen,
-                "route": route_coords
-            })
-            
+            if 'geometry' in best_edge:
+                for x, y in best_edge['geometry'].coords:
+                    route_coords.append({"lat": y, "lon": x})
+            else:
+                u_data = G.nodes[u]
+                route_coords.append({"lat": u_data['y'], "lon": u_data['x']})
+        
+        # Add final node
+        last = G.nodes[path[-1]]
+        route_coords.append({"lat": last['y'], "lon": last['x']})
+        
+        # Deduplicate consecutive identical points
+        unique_coords = []
+        for p in route_coords:
+            if not unique_coords or unique_coords[-1] != p:
+                unique_coords.append(p)
+        
         return {
             "start_node": int(orig_node),
             "end_node": int(dest_node),
-            "count": len(results),
-            "alternatives": results
+            "count": 1,
+            "alternatives": [{
+                "node_count": len(path),
+                "trail_names": names_seen,
+                "route": unique_coords
+            }]
         }
+
     except nx.NetworkXNoPath:
         raise HTTPException(status_code=404, detail="No route found between points")
     except Exception as e:
@@ -239,14 +332,44 @@ def get_nodes(api_key: str = Depends(verify_api_key)):
         raise HTTPException(status_code=503, detail="Graph not initialized")
     
     nodes_data = []
-    # OSMnx graph nodes have 'y' (lat) and 'x' (lon) as attributes
+    # A "through" node on any trail (oneway or bidirectional) has exactly 2
+    # unique adjacent nodes (one on each side). Count both in AND out neighbors.
     for node, data in G.nodes(data=True):
-        nodes_data.append({
-            "id": int(node),
-            "lat": data['y'],
-            "lon": data['x']
-        })
+        all_adjacent = set(G.predecessors(node)) | set(G.successors(node))
+        if len(all_adjacent) != 2:
+            nodes_data.append({
+                "id": int(node),
+                "lat": data['y'],
+                "lon": data['x']
+            })
     return nodes_data
+
+@app.get("/edges")
+def get_edges(api_key: str = Depends(verify_api_key)):
+    if G is None:
+        raise HTTPException(status_code=503, detail="Graph not initialized")
+    
+    # PERFORMANCE: For the UI edge background, we simplify the graph locally 
+    # so we don't send 57,000 tiny segments. This doesn't affect routing.
+    G_view = ox.simplify_graph(G)
+    
+    edges_data = []
+    for u, v, k, d in G_view.edges(keys=True, data=True):
+        if 'geometry' in d:
+            geom = d['geometry']
+            coords = list(geom.coords)
+        else:
+            u_data = G_view.nodes[u]
+            v_data = G_view.nodes[v]
+            coords = [(u_data['x'], u_data['y']), (v_data['x'], v_data['y'])]
+        
+        edges_data.append({
+            "u": int(u),
+            "v": int(v),
+            "coords": [{"lat": c[1], "lon": c[0]} for c in coords],
+            "name": d.get('name', 'N/A')
+        })
+    return edges_data
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8012)
