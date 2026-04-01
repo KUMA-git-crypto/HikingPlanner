@@ -14,20 +14,33 @@
         #controls {
             position: absolute; top: 10px; right: 10px; z-index: 1001;
             background: white; padding: 14px; border-radius: 10px;
-            box-shadow: 0 3px 14px rgba(0,0,0,0.25); width: 250px;
+            box-shadow: 0 3px 14px rgba(0,0,0,0.25); width: 280px;
+            transition: all 0.3s ease;
+        }
+        @media (max-width: 600px) {
+            #controls {
+                top: auto; bottom: 0; right: 0; left: 0;
+                width: 100%; border-radius: 20px 20px 0 0;
+                max-height: 40vh; overflow-y: auto;
+                padding-bottom: 30px;
+            }
+            .info { font-size: 11px; }
+            h3 { font-size: 14px; }
         }
         h3 { margin: 0 0 10px; font-size: 16px; color: #222; }
-        .info { font-size: 13px; margin-bottom: 10px; line-height: 1.5; color: #444; }
+        .info { font-size: 13px; margin-bottom: 10px; line-height: 1.4; color: #444; }
         button {
             cursor: pointer; padding: 10px; width: 100%;
-            border: none; border-radius: 6px; font-size: 13px;
+            border: none; border-radius: 8px; font-size: 13px;
             font-weight: bold; margin-bottom: 6px; color: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         #fetchBtn { background: #2196F3; }
+        #fetchBtn:active { transform: scale(0.98); }
         #fetchBtn:disabled { background: #90CAF9; cursor: not-allowed; }
         #undoBtn { background: #FF9800; } 
         #resetBtn { background: #757575; }
-        #gpxBtn, #kmlBtn { background: #4CAF50; }
+        #gpxBtn, #kmlBtn { background: #4CAF50; width: 49%; display: inline-block; }
         .radius-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:12px; }
         .radius-row input { flex:1; }
 
@@ -109,7 +122,8 @@ updateRadiusCircle();
 // edges: { "nodeId": [ {to, dist}, ... ] }
 let graphNodes = {};
 let graphEdges = {};
-let renderedEdges = new Set(); // Store "u-v" keys of already drawn segments
+let renderedEdges = new Set(); 
+let renderedNodes = new Set(); // Store ID of already placed circle markers
 
 function mergeTrailData(data) {
     // All nodes go into graphNodes for Dijkstra (routing needs intermediate nodes)
@@ -140,10 +154,13 @@ function mergeTrailData(data) {
     // Only show circles at junction/endpoint nodes (from server's `jn` list)
     const junctionSet = new Set(data.jn || []);
     for (const [id, pos] of Object.entries(data.n)) {
-        if (!junctionSet.has(id)) continue;  // skip intermediate nodes
+        if (!junctionSet.has(id)) continue; 
+        if (renderedNodes.has(id)) continue; // Optimization: don't redraw existing markers
+        renderedNodes.add(id);
+
         const marker = L.circleMarker([pos[0], pos[1]], {
-            radius: 5, fillColor: 'white', color: '#333',
-            weight: 1.5, opacity: 0.9, fillOpacity: 0.95
+            radius: 7, fillColor: 'white', color: '#333',
+            weight: 2, opacity: 0.9, fillOpacity: 0.95
         });
         marker.on('click', (ev) => {
             L.DomEvent.stopPropagation(ev);
