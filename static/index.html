@@ -86,10 +86,36 @@
 
 <script>
 // ─── MAP SETUP ────────────────────────────────────────────────────────────────
-const map = L.map('map').setView([35.3606, 138.7273], 13);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap contributors'
-}).addTo(map);
+});
+
+const gsiStdLayer = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
+    attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">地理院タイル</a>'
+});
+
+const gsiPaleLayer = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', {
+    attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">地理院タイル</a>'
+});
+
+const gsiPhotoLayer = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', {
+    attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">地理院タイル</a>'
+});
+
+const map = L.map('map', {
+    center: [35.3606, 138.7273],
+    zoom: 13,
+    layers: [gsiStdLayer] // Set GSI Standard as default
+});
+
+const baseMaps = {
+    "地理院地図 (標準)": gsiStdLayer,
+    "地理院地図 (淡色)": gsiPaleLayer,
+    "地理院地図 (写真)": gsiPhotoLayer,
+    "OpenStreetMap": osmLayer,
+};
+
+const layerControl = L.control.layers(baseMaps).addTo(map);
 
 const edgeLayer  = L.layerGroup().addTo(map);
 const nodeLayer  = L.layerGroup().addTo(map);
