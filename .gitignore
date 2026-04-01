@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+cache/
+data/*.graphml
+.env
+.DS_Store

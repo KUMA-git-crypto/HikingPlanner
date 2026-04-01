@@ -1,462 +1,432 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 <head>
-    <title>Hiking Trail Snap - Map UI</title>
+    <title>登山道ルートプランナー</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
-        body { margin: 0; padding: 0; font-family: sans-serif; overflow: hidden; }
-        #map { height: 100vh; width: 100%; transition: filter 0.3s; }
+        * { box-sizing: border-box; }
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; overflow: hidden; }
+        #map { height: 100vh; width: 100%; }
+
         #controls {
             position: absolute; top: 10px; right: 10px; z-index: 1001;
-            background: white; padding: 15px; border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.2); width: 260px;
-            max-height: 80vh; overflow-y: auto; transition: transform 0.3s ease;
+            background: white; padding: 14px; border-radius: 10px;
+            box-shadow: 0 3px 14px rgba(0,0,0,0.25); width: 250px;
         }
-        #uiToggle {
-            display: none; position: absolute; top: 10px; right: 10px; z-index: 1002;
-            width: 50px; height: 50px; background: white; border-radius: 50%;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.3); border: none; font-size: 24px;
-            line-height: 50px; text-align: center; cursor: pointer;
+        h3 { margin: 0 0 10px; font-size: 16px; color: #222; }
+        .info { font-size: 13px; margin-bottom: 10px; line-height: 1.5; color: #444; }
+        button {
+            cursor: pointer; padding: 10px; width: 100%;
+            border: none; border-radius: 6px; font-size: 13px;
+            font-weight: bold; margin-bottom: 6px; color: white;
         }
-        .info { font-size: 14px; margin-bottom: 10px; line-height: 1.4; color: #333; }
-        button { 
-            cursor: pointer; padding: 12px; width: 100%; background: #007bff; 
-            color: white; border: none; border-radius: 6px; font-weight: bold;
-            font-size: 15px; touch-action: manipulation;
+        #fetchBtn { background: #2196F3; }
+        #fetchBtn:disabled { background: #90CAF9; cursor: not-allowed; }
+        #undoBtn { background: #FF9800; } 
+        #resetBtn { background: #757575; }
+        #gpxBtn, #kmlBtn { background: #4CAF50; }
+        .radius-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:12px; }
+        .radius-row input { flex:1; }
+
+        #loadingBar {
+            display: none; width: 100%; height: 4px; background: #e0e0e0;
+            border-radius: 2px; margin-bottom: 8px; overflow: hidden;
         }
-        button:disabled { background: #ccc; }
-        h3 { margin-top: 0; font-size: 18px; color: #333; }
-        
-        @media (max-width: 600px) {
-            #controls { 
-                top: auto; bottom: 0; left: 0; right: 0; width: 100%; 
-                border-radius: 12px 12px 0 0; transform: translateY(100%);
-                padding: 10px 15px 20px 15px; box-sizing: border-box;
-                max-height: 50vh;
-            }
-            #controls.visible { transform: translateY(0); }
-            #uiToggle { display: block; width: 44px; height: 44px; line-height: 44px; font-size: 20px; }
-            .info { font-size: 14px; margin-bottom: 8px; }
-            button { padding: 10px; font-size: 14px; margin-bottom: 5px; }
-            h3 { font-size: 16px; margin-bottom: 8px; }
-            #waypointList { font-size: 12px; }
+        #loadingBar.active { display: block; }
+        #loadingBar::after {
+            content: ''; display: block; width: 40%; height: 100%;
+            background: #2196F3; border-radius: 2px;
+            animation: slide 1s ease-in-out infinite;
         }
-        #loadingOverlay {
-            display: none; position: fixed; inset: 0; z-index: 2000;
-            background: rgba(0,0,0,0.55); color: white;
-            flex-direction: column; align-items: center; justify-content: center;
-            font-size: 18px; text-align: center; gap: 12px;
+        @keyframes slide { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+
+        #waypointList { margin-top: 10px; border-top: 1px solid #eee; padding-top: 8px; font-size: 12px; color: #555; }
+        .area-badge {
+            display: inline-block; background: #e3f2fd; color: #1565c0;
+            border-radius: 4px; padding: 2px 7px; font-size: 11px; margin: 2px 2px 0 0;
         }
-        #loadingOverlay.active { display: flex; }
-        .spinner {
-            width: 48px; height: 48px; border: 5px solid rgba(255,255,255,0.3);
-            border-top-color: white; border-radius: 50%;
-            animation: spin 0.9s linear infinite;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
-<div id="loadingOverlay">
-    <div class="spinner"></div>
-    <div id="loadingMsg">登山道データを取得中...</div>
-</div>
-
-<button id="uiToggle">☰</button>
-<div id="controls" class="visible">
-    <h3>登山道ルート生成</h3>
-    <div class="info" id="status">地図をクリックしてスタート地点を選んでください。</div>
-    <button id="undoBtn" style="background: #ffc107; color: #000; margin-bottom:8px;">一つ戻す (Undo)</button>
-    <button id="resetBtn">リセット</button>
-    
-    <div id="waypointList" style="margin-top: 15px; border-top: 1px solid #eee; padding-top: 10px;">
+<div id="controls">
+    <h3>⛰️ 登山道ルートプランナー</h3>
+    <div id="loadingBar"></div>
+    <div class="info" id="status">地図を移動して「この付近を取得」を押してください。</div>
+    <button id="fetchBtn" onclick="fetchCurrentArea()">📥 この付近の登山道を取得</button>
+    <button id="undoBtn" onclick="undoLast()">↩️ 一つ戻す</button>
+    <button id="resetBtn" onclick="resetAll()">🗑️ リセット</button>
+    <button id="gpxBtn" onclick="exportRoute('gpx')">⬇️ GPXで保存</button>
+    <button id="kmlBtn" onclick="exportRoute('kml')">⬇️ KMLで保存</button>
+    <div id="waypointList" style="margin-top:10px; border-top:1px solid #eee; padding-top:8px; font-size:12px; color:#555;">
         <strong>通過ポイント：</strong>
-        <div id="listItems" style="margin-top:5px; font-size:13px; color:#555;">まだありません</div>
+        <div id="listItems">まだありません</div>
+    </div>
+    <div style="margin-top:8px; border-top:1px solid #eee; padding-top:6px; display:flex; align-items:center; gap:6px; font-size:12px;">
+        <span>半径:</span>
+        <input id="radiusSlider" type="range" min="3" max="20" value="10" style="flex:1">
+        <span id="radiusLabel" style="min-width:32px">10km</span>
     </div>
 </div>
 
 <div id="map"></div>
 
 <script>
-    const map = L.map('map').setView([35.3606, 138.7273], 14);
-    const apiKey = "mysecret"; // クラウド環境の環境変数 API_KEY と一致させてください
+// ─── MAP SETUP ────────────────────────────────────────────────────────────────
+const map = L.map('map').setView([35.3606, 138.7273], 13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+}).addTo(map);
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors'
+const edgeLayer  = L.layerGroup().addTo(map);
+const nodeLayer  = L.layerGroup().addTo(map);
+const statusEl   = document.getElementById('status');
+const loadingBar = document.getElementById('loadingBar');
+
+let radiusCircle = null;   // Visual circle showing fetch range
+
+// Update radius label and circle
+const slider = document.getElementById('radiusSlider');
+const rlabel = document.getElementById('radiusLabel');
+function updateRadiusCircle() {
+    const r = parseInt(slider.value) * 1000;
+    rlabel.textContent = slider.value + 'km';
+    const c = map.getCenter();
+    if (radiusCircle) map.removeLayer(radiusCircle);
+    radiusCircle = L.circle([c.lat, c.lng], {
+        radius: r, color: '#2196F3', weight: 1.5,
+        fill: false, dashArray: '6,6', interactive: false
     }).addTo(map);
+}
+slider.addEventListener('input', updateRadiusCircle);
+map.on('move', updateRadiusCircle);
+updateRadiusCircle();
 
-    let startMarker = null;
-    let endMarker = null;
-    let routeLine = null;
-    let edgeLayer = L.layerGroup().addTo(map);
-    let nodeLayer = L.layerGroup().addTo(map);
+// ─── CLIENT-SIDE GRAPH ───────────────────────────────────────────────────────
+// nodes: { "nodeId": [lat, lon] }
+// edges: { "nodeId": [ {to, dist}, ... ] }
+let graphNodes = {};
+let graphEdges = {};
+let renderedEdges = new Set(); // Store "u-v" keys of already drawn segments
 
-    const statusEl = document.getElementById('status');
-    const resetBtn = document.getElementById('resetBtn');
-
-    // Node visibility control based on zoom
-    function updateNodeVisibility() {
-        if (map.getZoom() < 13) {
-            if (map.hasLayer(nodeLayer)) map.removeLayer(nodeLayer);
-            if (waypoints.length === 0) statusEl.innerText = "もっとズームすると地点（丸印）が出てきます。";
-        } else {
-            if (!map.hasLayer(nodeLayer)) map.addLayer(nodeLayer);
-            if (waypoints.length === 0) statusEl.innerText = "白丸をクリックして開始地点を選んでください。";
-        }
+function mergeTrailData(data) {
+    // All nodes go into graphNodes for Dijkstra (routing needs intermediate nodes)
+    for (const [id, pos] of Object.entries(data.n)) { graphNodes[id] = pos; }
+    for (const e of data.e) {
+        if (!graphEdges[e.u]) graphEdges[e.u] = [];
+        graphEdges[e.u].push({ to: e.v, dist: e.d });
     }
-    
-    map.on('zoomend', updateNodeVisibility);
+    // Render edges
+    for (const e of data.e) {
+        // Use a composite key to avoid redrawing the same physical segment
+        const key = [e.u, e.v].sort().join('-');
+        if (renderedEdges.has(key)) continue;
+        renderedEdges.add(key);
 
-    async function initNodes() {
-        const nodes = await fetch(`/nodes?api_key=${apiKey}`).then(r => r.json());
-        nodes.forEach(node => {
-            const marker = L.circleMarker([node.lat, node.lon], {
-                radius: 6, // Slightly larger for touch
-                fillColor: "white",
-                color: "#333",
-                weight: 2,
-                opacity: 0.6,
-                fillOpacity: 0.8
-            });
-
-            marker.on('click', (e) => {
-                L.DomEvent.stopPropagation(e);
-                handlePointSelection(node.lat, node.lon);
-            });
-            marker.addTo(nodeLayer);
-        });
-        updateNodeVisibility();
-    }
-
-    async function initEdges() {
-        const edges = await fetch(`/edges?api_key=${apiKey}`).then(r => r.json());
-        edges.forEach(edge => {
-            // Visual line
-            const polyline = L.polyline(edge.coords, {
-                color: '#666',
-                weight: 2,
-                opacity: 0.4,
-                dashArray: '5, 10',
-                interactive: false // Let the hitbox handle clicks
+        if (e.c && e.c.length >= 2) {
+            const latlngs = e.c.map(([ln, lt]) => [lt, ln]);
+            const isConnector = e.t === 1;
+            L.polyline(latlngs, {
+                color: isConnector ? '#9E9E9E' : '#4CAF50',
+                weight: isConnector ? 1.5 : 2.5,
+                opacity: isConnector ? 0.4 : 0.75,
+                dashArray: isConnector ? '4,6' : null,
+                interactive: false
             }).addTo(edgeLayer);
-
-            // Invisible thick hitbox for easy clicking
-            const hitbox = L.polyline(edge.coords, {
-                color: 'transparent',
-                weight: 15,
-                opacity: 0,
-                interactive: true
-            }).addTo(edgeLayer);
-
-            hitbox.on('click', (e) => {
-                L.DomEvent.stopPropagation(e);
-                handlePointSelection(e.latlng.lat, e.latlng.lng);
-            });
-        });
-    }
-
-    initAreaAndMap();
-
-    // --- Area loading ---
-    let currentAreaKey = null;
-    let areaDebounceTimer = null;
-    let areaPollingTimer = null;
-
-    function showLoading(msg) {
-        document.getElementById('loadingMsg').innerText = msg || '登山道データを取得中...';
-        document.getElementById('loadingOverlay').classList.add('active');
-    }
-    function hideLoading() {
-        document.getElementById('loadingOverlay').classList.remove('active');
-    }
-
-    async function loadAreaData() {
-        edgeLayer.clearLayers();
-        nodeLayer.clearLayers();
-        const [edges, nodes] = await Promise.all([
-            fetch(`/edges?api_key=${apiKey}`).then(r => r.json()),
-            fetch(`/nodes?api_key=${apiKey}`).then(r => r.json())
-        ]);
-        edges.forEach(edge => {
-            L.polyline(edge.coords, {
-                color: '#666', weight: 2, opacity: 0.4,
-                dashArray: '5, 10', interactive: false
-            }).addTo(edgeLayer);
-            const hitbox = L.polyline(edge.coords, {
-                color: 'transparent', weight: 15, opacity: 0, interactive: true
-            }).addTo(edgeLayer);
-            hitbox.on('click', (e) => {
-                L.DomEvent.stopPropagation(e);
-                handlePointSelection(e.latlng.lat, e.latlng.lng);
-            });
-        });
-        nodes.forEach(node => {
-            const marker = L.circleMarker([node.lat, node.lon], {
-                radius: 6, fillColor: 'white', color: '#333',
-                weight: 2, opacity: 0.6, fillOpacity: 0.8
-            });
-            marker.on('click', (e) => {
-                L.DomEvent.stopPropagation(e);
-                handlePointSelection(node.lat, node.lon);
-            });
-            marker.addTo(nodeLayer);
-        });
-        updateNodeVisibility();
-    }
-
-    async function initAreaAndMap() {
-        const status = await fetch('/area/status').then(r => r.json());
-        if (status.status === 'ready') {
-            currentAreaKey = status.tile_key;
-            await loadAreaData();
-        } else {
-            // No area loaded yet - trigger request for current map center
-            const center = map.getCenter();
-            requestArea(center.lat, center.lng);
         }
     }
-
-    async function pollUntilReady() {
-        const res = await fetch('/area/status').then(r => r.json());
-        document.getElementById('loadingMsg').innerText =
-            res.message || '登山道データを取得中...';
-        if (res.status === 'ready') {
-            currentAreaKey = res.tile_key;
-            hideLoading();
-            // Reset any drawn routes since area changed
-            if (typeof resetAll === 'function') resetAll();
-            await loadAreaData();
-        } else if (res.status === 'error') {
-            hideLoading();
-            statusEl.innerText = 'エラー: ' + res.message;
-        } else {
-            areaPollingTimer = setTimeout(pollUntilReady, 1500);
-        }
-    }
-
-    async function requestArea(lat, lon) {
-        const res = await fetch(`/area?lat=${lat}&lon=${lon}&api_key=${apiKey}`)
-            .then(r => r.json());
-        if (res.tile_key === currentAreaKey) return;  // Same tile, no change
-        // New tile — show loading overlay and start polling
-        showLoading(res.message);
-        if (areaPollingTimer) clearTimeout(areaPollingTimer);
-        pollUntilReady();
-    }
-
-    // Debounced map moveend: wait 2s after panning stops
-    map.on('moveend', () => {
-        const zoom = map.getZoom();
-        if (zoom < 11) return;  // Too zoomed out, skip
-        if (areaDebounceTimer) clearTimeout(areaDebounceTimer);
-        areaDebounceTimer = setTimeout(() => {
-            const center = map.getCenter();
-            requestArea(center.lat, center.lng);
-        }, 2000);
-    });
-
-    map.on('click', async function(e) {
-        handlePointSelection(e.latlng.lat, e.latlng.lng);
-    });
-
-    let waypoints = [];
-    let segments = []; // [{polyline, data}]
-    let alternativeRoutes = []; // Current segment's alternatives
-    const undoBtn = document.getElementById('undoBtn');
-    const listItems = document.getElementById('listItems');
-
-    // Add Export Buttons
-    const exportDiv = document.createElement('div');
-    exportDiv.style.marginTop = "10px";
-    exportDiv.innerHTML = `
-        <button id="gpxBtn" style="background:#28a745; margin-bottom:5px;">GPXで保存</button>
-        <button id="kmlBtn" style="background:#28a745;">KMLで保存</button>
-    `;
-    resetBtn.parentNode.insertBefore(exportDiv, resetBtn.nextSibling);
-
-    async function exportRoute(format) {
-        if (segments.length === 0) {
-            alert("ルートがありません。");
-            return;
-        }
-        
-        const allPoints = [];
-        // Sequential collection of points from all segments
-        segments.forEach((seg, i) => {
-            // Avoid duplicating the junction point between segments
-            const pts = (i === 0) ? seg.data.route : seg.data.route.slice(1);
-            allPoints.push(...pts);
+    // Only show circles at junction/endpoint nodes (from server's `jn` list)
+    const junctionSet = new Set(data.jn || []);
+    for (const [id, pos] of Object.entries(data.n)) {
+        if (!junctionSet.has(id)) continue;  // skip intermediate nodes
+        const marker = L.circleMarker([pos[0], pos[1]], {
+            radius: 5, fillColor: 'white', color: '#333',
+            weight: 1.5, opacity: 0.9, fillOpacity: 0.95
         });
-
-        const response = await fetch(`/export/${format}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: "My_Hiking_Trip", points: allPoints })
+        marker.on('click', (ev) => {
+            L.DomEvent.stopPropagation(ev);
+            handleNodeClick(id, pos[0], pos[1]);
         });
-        
-        if (!response.ok) {
-            alert("保存に失敗しました。");
-            return;
-        }
-
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `route.${format}`;
-        document.body.appendChild(a);
-        a.click();
-        
-        // Clean up
-        setTimeout(() => {
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(url);
-        }, 100);
+        marker.addTo(nodeLayer);
     }
+}
 
-    document.getElementById('gpxBtn').onclick = () => exportRoute('gpx');
-    document.getElementById('kmlBtn').onclick = () => exportRoute('kml');
 
-    async function handlePointSelection(lat, lon) {
-        statusEl.innerText = "吸着中...";
-        try {
-            const snapped = await fetch(`/snap?lat=${lat}&lon=${lon}&api_key=${apiKey}`).then(r => {
-                if (r.status === 403) throw new Error("APIキーが一致しません。Renderの環境変数を確認してください。");
-                if (r.status === 503) throw new Error("サーバーで登山道データを準備中です。30秒ほどお待ちください。");
-                if (!r.ok) throw new Error("サーバーエラーが発生しました(" + r.status + ")");
-                return r.json();
-            });
-            
-                if (snapped.snapped) {
-                // ... Existing logic ...
-                const sPt = { lat: snapped.snapped.lat, lon: snapped.snapped.lon };
-                const label = waypoints.length === 0 ? "スタート" : `地点 ${waypoints.length}`;
-                // interactive: false allows clicking "through" this marker to select the same point again
-                const marker = L.marker([sPt.lat, sPt.lon], { interactive: false }).addTo(map)
-                    .bindPopup(label);
-                
-                if (waypoints.length === 0) marker.openPopup();
-                
-                waypoints.push({ marker, pos: sPt, label });
-                updateSidebar();
 
-                if (waypoints.length >= 2) {
-                    const prev = waypoints[waypoints.length - 2].pos;
-                    const curr = waypoints[waypoints.length - 1].pos;
-                    calculateSegment(prev, curr);
-                } else {
-                    statusEl.innerText = "次の地点（目的地）を選んでください。";
-                }
+// ─── AREA FETCHING ────────────────────────────────────────────────────────────
+async function fetchCurrentArea() {
+    const btn = document.getElementById('fetchBtn');
+    btn.disabled = true;
+    loadingBar.classList.add('active');
+    statusEl.textContent = '登山道データを取得中...';
+
+    const c = map.getCenter();
+    const radius = parseInt(document.getElementById('radiusSlider').value);
+
+    try {
+        const res = await fetch(`/fetch-area?lat=${c.lat.toFixed(5)}&lon=${c.lng.toFixed(5)}&radius=${radius}`);
+        if (!res.ok) { const err = await res.json(); throw new Error(err.detail || `HTTP ${res.status}`); }
+        const data = await res.json();
+        mergeTrailData(data);
+        const nc = Object.keys(data.n).length;
+        const ec = data.e.filter(e => e.t === 0).length;
+        statusEl.textContent = `取得完了！ 分岐点: ${nc}, 道の区間: ${ec}　白丸をクリックしてください。`;
+    } catch (e) {
+        statusEl.textContent = 'エラー: ' + e.message;
+    } finally {
+        btn.disabled = false;
+        loadingBar.classList.remove('active');
+    }
+}
+
+function updateAreaBadges() {
+    const container = document.getElementById('areaBadges');
+    container.innerHTML = loadedBBoxes.map((b, i) =>
+        `<span class="area-badge">エリア ${i+1}</span>`
+    ).join('');
+}
+
+// ─── MIN-HEAP DIJKSTRA ────────────────────────────────────────────────────────
+class MinHeap {
+    constructor() { this.data = []; }
+    push(val, p) { this.data.push({val, p}); this._up(this.data.length - 1); }
+    pop() {
+        const top = this.data[0]; const bot = this.data.pop();
+        if (this.data.length > 0) { this.data[0] = bot; this._down(0); }
+        return top;
+    }
+    _up(i) {
+        while (i > 0) {
+            const par = (i - 1) >> 1;
+            if (this.data[par].p <= this.data[i].p) break;
+            [this.data[i], this.data[par]] = [this.data[par], this.data[i]]; i = par;
+        }
+    }
+    _down(i) {
+        const n = this.data.length;
+        while (true) {
+            let s = i, l = 2*i+1, r = 2*i+2;
+            if (l < n && this.data[l].p < this.data[s].p) s = l;
+            if (r < n && this.data[r].p < this.data[s].p) s = r;
+            if (s === i) break;
+            [this.data[i], this.data[s]] = [this.data[s], this.data[i]]; i = s;
+        }
+    }
+    get isEmpty() { return this.data.length === 0; }
+}
+
+function dijkstra(startId, endId, edgePenalties = {}) {
+    const dist = { [startId]: 0 };
+    const prev = {};
+    const visited = new Set();
+    const pq = new MinHeap();
+    pq.push(startId, 0);
+
+    while (!pq.isEmpty) {
+        const { val: cur, p: curDist } = pq.pop();
+        if (cur === endId) break;
+        if (visited.has(cur)) continue;
+        visited.add(cur);
+
+        for (const edge of (graphEdges[cur] || [])) {
+            if (visited.has(edge.to)) continue;
+            // Apply penalty if this edge has been used in a previous alternative
+            const penalty = edgePenalties[`${cur}-${edge.to}`] || 1.0;
+            const alt = curDist + (edge.dist * penalty);
+            if (dist[edge.to] === undefined || alt < dist[edge.to]) {
+                dist[edge.to] = alt;
+                prev[edge.to] = cur;
+                pq.push(edge.to, alt);
             }
-        } catch (e) {
-            statusEl.innerText = "エラー: " + e.message;
-            console.error(e);
         }
     }
 
-    async function calculateSegment(start, end) {
-        statusEl.innerText = "ルート計算中...";
-        const res = await fetch(`/route?start_lat=${start.lat}&start_lon=${start.lon}&end_lat=${end.lat}&end_lon=${end.lon}&api_key=${apiKey}`)
-            .then(r => r.json());
-        
-        if (res.alternatives && res.alternatives.length > 0) {
-            alternativeRoutes = res.alternatives;
-            currentRouteIndex = 0;
-            displayNewSegment(0);
-            updateStatusWithAlternatives();
-        } else {
-            statusEl.innerText = "ルートが見つかりませんでした。";
-            undoLast();
+    if (dist[endId] === undefined) return null;
+    const path = [];
+    let cur = endId;
+    while (cur !== undefined) { path.push(cur); cur = prev[cur]; }
+    path.reverse();
+    return { path, distance: dist[endId] };
+}
+
+// ─── WAYPOINTS & ROUTING ─────────────────────────────────────────────────────
+let waypoints  = [];   // [{id, lat, lon, marker}]
+let routeLines = [];   // Leaflet polylines
+
+function handleNodeClick(id, lat, lon) {
+    if (Object.keys(graphNodes).length === 0) {
+        statusEl.textContent = 'まず「この付近の登山道を取得」を押してください。';
+        return;
+    }
+    const label = waypoints.length === 0 ? 'スタート' : `地点 ${waypoints.length}`;
+    // interaction:false is crucial to allow clicking the node UNDER the marker for piston routes
+    const marker = L.marker([lat, lon], { interactive: false }).addTo(map).bindPopup(label);
+    waypoints.push({ id, lat, lon, marker });
+    updateSidebar();
+
+    if (waypoints.length >= 2) {
+        const prev = waypoints[waypoints.length - 2];
+        const curr = waypoints[waypoints.length - 1];
+        drawRoute(prev, curr);
+    } else {
+        statusEl.textContent = '次の地点（目的地）を選んでください。';
+    }
+}
+
+let currentAlternatives = []; // Current shown alternative paths
+
+function drawRoute(from, to) {
+    statusEl.textContent = 'ルート候補を計算中...';
+    // Clear old alternative display
+    currentAlternatives.forEach(a => map.removeLayer(a.layer));
+    currentAlternatives = [];
+
+    const penalties = {};
+    const paths = [];
+
+    // Find up to 3 alternatives using edge penalty heuristic
+    for (let i = 0; i < 3; i++) {
+        const res = dijkstra(from.id, to.id, penalties);
+        if (!res) break;
+        paths.push(res.path);
+        // Penalty logic: discourage reuse of edges from the first path
+        for (let j = 0; j < res.path.length - 1; j++) {
+            const u = res.path[j], v = res.path[j+1];
+            penalties[`${u}-${v}`] = (penalties[`${u}-${v}`] || 1) + 5.0; // heavy penalty
+            penalties[`${v}-${u}`] = (penalties[`${v}-${u}`] || 1) + 5.0;
         }
     }
 
-    function displayNewSegment(index) {
-        if (segments.length >= waypoints.length - 1 && segments.length > 0) {
-             const lastSeg = segments.pop();
-             map.removeLayer(lastSeg.polyline);
-        }
+    if (paths.length === 0) {
+        statusEl.textContent = 'ルートが見つかりませんでした。';
+        undoLast(); return;
+    }
 
-        const route = alternativeRoutes[index];
-        const latlngs = route.route.map(p => [p.lat, p.lon]);
-        const polyline = L.polyline(latlngs, {
-            color: index === 0 ? 'blue' : (index === 1 ? 'green' : 'orange'),
-            weight: 5, 
-            opacity: 0.8
+    // Render alternatives
+    paths.forEach((path, idx) => {
+        const latlngs = path.map(id => graphNodes[id]);
+        const isMain = idx === 0;
+        const line = L.polyline(latlngs, {
+            color: isMain ? '#E91E63' : '#9C27B0',
+            weight: isMain ? 6 : 4,
+            opacity: isMain ? 0.9 : 0.4,
+            dashArray: isMain ? null : '5,5',
+            interactive: true
         }).addTo(map);
-        
-        segments.push({ polyline, data: route, altIndex: index });
-        updateSidebar();
-    }
 
-    function updateSidebar() {
-        if (waypoints.length === 0) {
-            listItems.innerHTML = "まだありません";
-            return;
-        }
-        
-        let html = "<ul style='padding-left:15px; margin:5px 0;'>";
-        waypoints.forEach((wp, i) => {
-            html += `<li><strong>${wp.label}</strong></li>`;
-            if (segments[i]) {
-                const trails = segments[i].data.trail_names.join(" → ");
-                html += `<div style='font-size:11px; color:#007bff; border-left:2px solid #007bff; padding-left:5px; margin:2px 0 5px 5px;'>${trails}</div>`;
-            }
+        line.on('click', (e) => {
+            L.DomEvent.stopPropagation(e);
+            selectAlternative(idx);
         });
-        html += "</ul>";
-        listItems.innerHTML = html;
+
+        currentAlternatives.push({ path, layer: line });
+    });
+
+    selectAlternative(0, true);
+}
+
+function selectAlternative(idx, isInitial = false) {
+    const selected = currentAlternatives[idx];
+    if (!selected) return;
+
+    // Move selected to routeLines and update UI
+    if (!isInitial) {
+        // Remove currently active last route line
+        const lastLine = routeLines.pop();
+        if (lastLine) map.removeLayer(lastLine);
     }
 
-    function updateStatusWithAlternatives() {
-        statusEl.innerHTML = `地点 ${waypoints.length-1} → ${waypoints.length} のルートを選んでください<br>` +
-            `<button id="nextRoute" style="margin-top:5px; background:#28a745">別の候補を表示</button>`;
-        
-        document.getElementById('nextRoute').onclick = () => {
-            currentRouteIndex = (currentRouteIndex + 1) % alternativeRoutes.length;
-            displayNewSegment(currentRouteIndex);
-            updateStatusWithAlternatives();
-        };
+    // Highlighting
+    currentAlternatives.forEach((alt, i) => {
+        const line = alt.layer;
+        const isSelected = i === idx;
+        line.setStyle({
+            color: isSelected ? '#E91E63' : '#9C27B0',
+            weight: isSelected ? 6 : 4,
+            opacity: isSelected ? 0.9 : 0.3,
+            dashArray: isSelected ? null : '5,5'
+        });
+        if (isSelected) line.bringToFront();
+    });
+
+    // Add high-res version to routeLines for export
+    const finalLine = L.polyline(selected.path.map(id => graphNodes[id]), {
+        color: '#E91E63', weight: 6, opacity: 0.9, interactive: false
+    }).addTo(map);
+    routeLines.push(finalLine);
+
+    const totalDist = selected.path.reduce((sum, id, i) => {
+        if (i === 0) return 0;
+        const p1 = graphNodes[selected.path[i-1]], p2 = graphNodes[id];
+        return sum + haversine(p1[0], p1[1], p2[0], p2[1]);
+    }, 0);
+
+    statusEl.textContent = `ルート${idx+1}を選択中 (距離: ${(totalDist/1000).toFixed(2)}km)。別の線をクリックで切替可。`;
+    updateSidebar();
+}
+
+// Haversine in JS (mirrors the server-side Python)
+function haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const phi1 = lat1 * Math.PI / 180, phi2 = lat2 * Math.PI / 180;
+    const dphi = (lat2-lat1) * Math.PI / 180;
+    const dlam = (lon2-lon1) * Math.PI / 180;
+    const a = Math.sin(dphi/2)**2 + Math.cos(phi1)*Math.cos(phi2)*Math.sin(dlam/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function updateSidebar() {
+    const el = document.getElementById('listItems');
+    if (waypoints.length === 0) { el.textContent = 'まだありません'; return; }
+    el.innerHTML = waypoints.map((wp, i) =>
+        `<div>● <strong>${i === 0 ? 'スタート' : `地点 ${i}`}</strong></div>`
+    ).join('');
+}
+
+function undoLast() {
+    if (waypoints.length > 0) {
+        const wp = waypoints.pop();
+        map.removeLayer(wp.marker);
     }
-
-    function undoLast() {
-        if (waypoints.length > 0) {
-            const lastWp = waypoints.pop();
-            map.removeLayer(lastWp.marker);
-        }
-        if (segments.length > 0) {
-            const lastSeg = segments.pop();
-            map.removeLayer(lastSeg.polyline);
-        }
-        updateSidebar();
-        
-        if (waypoints.length >= 2) {
-            statusEl.innerText = "消去しました。";
-        } else if (waypoints.length === 1) {
-            statusEl.innerText = "スタート地点のみの状態です。";
-        } else {
-            statusEl.innerText = "地点を選んでください。";
-        }
-        alternativeRoutes = [];
+    if (routeLines.length > 0) {
+        map.removeLayer(routeLines.pop());
     }
+    updateSidebar();
+    statusEl.textContent = waypoints.length >= 1
+        ? '次の地点を選んでください。'
+        : '地図上の白丸をクリックして開始地点を選んでください。';
+}
 
-    undoBtn.onclick = undoLast;
+function resetAll() {
+    waypoints.forEach(wp => map.removeLayer(wp.marker));
+    routeLines.forEach(l => map.removeLayer(l));
+    waypoints = []; routeLines = [];
+    updateSidebar();
+    statusEl.textContent = '地図上の白丸をクリックして開始地点を選んでください。';
+}
 
-    const controls = document.getElementById('controls');
-    document.getElementById('uiToggle').onclick = (e) => {
-        controls.classList.toggle('visible');
-        e.stopPropagation();
-    };
-
-    resetBtn.onclick = () => {
-        waypoints.forEach(w => map.removeLayer(w.marker));
-        segments.forEach(s => map.removeLayer(s.polyline));
-        waypoints = []; segments = []; alternativeRoutes = [];
-        updateSidebar();
-        statusEl.innerText = "スタート地点を選んでください。";
-    };
+// ─── EXPORT ──────────────────────────────────────────────────────────────────
+async function exportRoute(format) {
+    if (routeLines.length === 0) { alert('ルートがありません。'); return; }
+    const allPoints = [];
+    routeLines.forEach(line => {
+        line.getLatLngs().forEach(ll => allPoints.push({ lat: ll.lat, lon: ll.lng }));
+    });
+    const res = await fetch(`/export/${format}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'HikingRoute', points: allPoints })
+    });
+    if (!res.ok) { alert('保存に失敗しました。'); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `route.${format}`;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+}
 </script>
-
 </body>
 </html>
