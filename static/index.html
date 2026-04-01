@@ -73,10 +73,8 @@
     <button id="resetBtn" onclick="resetAll()">🗑️ リセット</button>
     <button id="gpxBtn" onclick="exportRoute('gpx')">⬇️ GPXで保存</button>
     <button id="kmlBtn" onclick="exportRoute('kml')">⬇️ KMLで保存</button>
-    <div id="waypointList" style="margin-top:10px; border-top:1px solid #eee; padding-top:8px; font-size:12px; color:#555;">
-        <strong>通過ポイント：</strong>
-        <div id="listItems">まだありません</div>
-    </div>
+    <!-- Waypoint list removed as per user request (redundant without names) -->
+    <div id="waypointList" style="display:none"></div>
     <div style="margin-top:8px; border-top:1px solid #eee; padding-top:6px; display:flex; align-items:center; gap:6px; font-size:12px;">
         <span>半径:</span>
         <input id="radiusSlider" type="range" min="3" max="20" value="10" style="flex:1">
@@ -395,11 +393,7 @@ function haversine(lat1, lon1, lat2, lon2) {
 }
 
 function updateSidebar() {
-    const el = document.getElementById('listItems');
-    if (waypoints.length === 0) { el.textContent = 'まだありません'; return; }
-    el.innerHTML = waypoints.map((wp, i) =>
-        `<div>● <strong>${i === 0 ? 'スタート' : `地点 ${i}`}</strong></div>`
-    ).join('');
+    // Hidden as per user request
 }
 
 function undoLast() {
