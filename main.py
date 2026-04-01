@@ -12,6 +12,7 @@ import os
 import traceback
 import threading
 import sys
+import shutil
 
 # Add scripts dir to path so we can import prep_data
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'scripts'))
