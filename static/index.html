@@ -571,28 +571,34 @@ function selectAlternative(idx, isInitial = false) {
 
     // Add high-res version to routeLines for export
     const finalLine = L.polyline(selected.path.map(id => graphNodes[id]), {
-        color: isGap ? '#F44336' : '#E91E63', 
+        color: selected.isGap ? '#F44336' : '#E91E63', 
         weight: 6, opacity: 0.9, 
         lineJoin: 'round', lineCap: 'round',
         interactive: false,
-        dashArray: isGap ? '10,10' : null
+        dashArray: selected.isGap ? '10,10' : null
     }).addTo(map);
     routeLines.push(finalLine);
 
-    // Sum distance using edge.dist from the server for absolute consistency
     let totalLegDist = 0;
     const isGap = selected.isGap;
     
     if (isGap) {
-        const fromPos = graphNodes[selected.path[0]];
-        const toPos = graphNodes[selected.path[1]];
-        totalLegDist = haversine(fromPos[0], fromPos[1], toPos[0], toPos[1]);
+        // Safe Coordinate Retrieval
+        const fromLat = graphNodes[selected.path[0]] ? graphNodes[selected.path[0]][0] : from.lat;
+        const fromLon = graphNodes[selected.path[0]] ? graphNodes[selected.path[0]][1] : from.lon;
+        const toLat = graphNodes[selected.path[1]] ? graphNodes[selected.path[1]][0] : to.lat;
+        const toLon = graphNodes[selected.path[1]] ? graphNodes[selected.path[1]][1] : to.lon;
+        totalLegDist = haversine(fromLat, fromLon, toLat, toLon);
     } else {
         for (let i = 0; i < selected.path.length - 1; i++) {
             const u = selected.path[i], v = selected.path[i+1];
             const edge = (graphEdges[u] || []).find(e => e.to === v);
-            if (edge) totalLegDist += edge.dist;
-            else totalLegDist += haversine(graphNodes[u][0], graphNodes[u][1], graphNodes[v][0], graphNodes[v][1]);
+            if (edge) {
+                totalLegDist += edge.dist;
+            } else {
+                const uPos = graphNodes[u], vPos = graphNodes[v];
+                if (uPos && vPos) totalLegDist += haversine(uPos[0], uPos[1], vPos[0], vPos[1]);
+            }
         }
     }
 

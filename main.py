@@ -189,11 +189,13 @@ def build_trail_data(osm_json: dict) -> dict:
             referenced.add(pk_id)
 
     filtered_nodes = {nid: nodes[nid] for nid in referenced if nid in nodes}
-    # Add elevation suffix for frontend
-    for nid, pos in filtered_nodes.items():
+    # Add elevation suffix for frontend (Fix: avoiding dict mutation during iteration)
+    ele_data = {}
+    for nid in filtered_nodes:
         ele_key = nid + "_ele"
         if ele_key in nodes:
-            filtered_nodes[ele_key] = nodes[ele_key]
+            ele_data[ele_key] = nodes[ele_key]
+    filtered_nodes.update(ele_data)
 
     junctions = {nid for nid in junction_ids if nid in referenced}
     trailheads = {nid for nid in trailhead_ids if nid in referenced}
