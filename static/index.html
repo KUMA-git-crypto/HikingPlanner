@@ -236,6 +236,7 @@ function mergeTrailData(data) {
                 weight: isPeakAccess ? 2 : (isConnector ? 1.5 : 2.5),
                 opacity: isConnector ? 0.4 : 0.75,
                 dashArray: isPeakAccess ? '5,5' : (isConnector ? '4,6' : null),
+                lineJoin: 'round', lineCap: 'round',
                 interactive: false
             }).addTo(edgeLayer);
         }
@@ -251,8 +252,9 @@ function mergeTrailData(data) {
         if (renderedNodes.has(pk.id)) return;
         renderedNodes.add(pk.id);
         const marker = L.circleMarker([pk.lat, pk.lon], {
-            radius: 9, fillColor: '#F44336', color: '#B71C1C',
-            weight: 2, opacity: 1, fillOpacity: 0.9,
+            radius: 12, // Increased for easier clicking
+            fillColor: '#F44336', color: '#B71C1C',
+            weight: 3, opacity: 1, fillOpacity: 1.0,
             className: 'peak-marker',
             pane: 'peakPane'
         }).bindTooltip(pk.name, {permanent: true, direction: 'top', className: 'peak-label'});
@@ -448,7 +450,7 @@ function dijkstra(startId, endId, edgePenalties = {}) {
 let waypoints  = [];   // [{id, lat, lon, marker}]
 let routeLines = [];   // Leaflet polylines
 
-function handleNodeClick(id, lat, lon) {
+async function handleNodeClick(id, lat, lon) {
     if (Object.keys(graphNodes).length === 0) {
         statusEl.textContent = 'まず「この付近の登山道を取得」を押してください。';
         return;
@@ -456,9 +458,16 @@ function handleNodeClick(id, lat, lon) {
     const label = waypoints.length === 0 ? 'スタート' : `地点 ${waypoints.length}`;
     const marker = L.marker([lat, lon], { interactive: false }).addTo(map).bindPopup(label);
     
-    // Check if this node has elevation info (from server peaks or tagged nodes)
+    // Fetch precise elevation from our GSI proxy
     let ele = 0;
-    if (graphNodes[id + "_ele"]) ele = graphNodes[id + "_ele"];
+    try {
+        const res = await fetch(`/get-elevation?lat=${lat}&lon=${lon}`);
+        const eData = await res.json();
+        ele = eData.elevation || 0;
+    } catch(e) { 
+        // Fallback to OSM ele if available
+        if (graphNodes[id + "_ele"]) ele = graphNodes[id + "_ele"];
+    }
     
     waypoints.push({ id, lat, lon, marker, legDist: 0, ele: ele }); 
     updateSidebar();
@@ -511,6 +520,7 @@ function drawRoute(from, to) {
             weight: isMain ? 6 : 4,
             opacity: isMain ? 0.9 : 0.4,
             dashArray: isMain ? null : '5,5',
+            lineJoin: 'round', lineCap: 'round',
             interactive: true
         }).addTo(map);
 
@@ -551,7 +561,9 @@ function selectAlternative(idx, isInitial = false) {
 
     // Add high-res version to routeLines for export
     const finalLine = L.polyline(selected.path.map(id => graphNodes[id]), {
-        color: '#E91E63', weight: 6, opacity: 0.9, interactive: false
+        color: '#E91E63', weight: 6, opacity: 0.9, 
+        lineJoin: 'round', lineCap: 'round',
+        interactive: false
     }).addTo(map);
     routeLines.push(finalLine);
 
@@ -579,13 +591,16 @@ function haversine(lat1, lon1, lat2, lon2) {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-function calculateHikingTime(meters, ascentMeters = 0) {
+function calculateHikingTime(meters, ascentMeters = 0, descentMeters = 0) {
     if (meters === 0) return 0;
-    // Naismith's Rule: 1km = 12 min (5.0 km/h)
-    // + 1 min for every 10 meters of ascent
-    const horizontalMins = (meters / 1000) * 12;
-    const ascentMins = Math.max(0, ascentMeters / 10);
-    return Math.ceil(horizontalMins + ascentMins);
+    // Mountain Pace (Yamamoto/Mapple inspired): 1km = 20-25 min
+    // Let's use 20 min/km as base (3.0 km/h)
+    // + 10 min for every 100 meters of ascent
+    // + 5 min for every 100 meters of descent (downhill is not effortless)
+    const horizontalMins = (meters / 1000) * 20;
+    const ascentMins = Math.max(0, (ascentMeters / 100) * 10);
+    const descentMins = Math.max(0, (descentMeters / 100) * 5);
+    return Math.ceil(horizontalMins + ascentMins + descentMins);
 }
 
 function formatTime(mins) {
@@ -608,22 +623,25 @@ function updateSidebar() {
         
         cumulativeDist += wp.legDist;
         
-        // Calculate climb if elevation is known for both ends
+        // Calculate climb/descent
         let ascent = 0;
+        let descent = 0;
         if (i > 0) {
             const prev = waypoints[i-1];
             if (prev.ele && wp.ele) {
-                ascent = Math.max(0, wp.ele - prev.ele);
+                const diff = wp.ele - prev.ele;
+                if (diff > 0) ascent = diff;
+                else descent = Math.abs(diff);
             }
         }
         
-        const legTime = calculateHikingTime(wp.legDist, ascent);
+        const legTime = calculateHikingTime(wp.legDist, ascent, descent);
         cumulativeTime += legTime;
 
         if (i === 0) {
-            div.innerHTML = `<strong>🚩 START</strong> ${wp.ele ? `(${wp.ele}m)` : ''}`;
+            div.innerHTML = `<strong>🚩 START</strong> ${wp.ele ? `(${Math.round(wp.ele)}m)` : ''}`;
         } else {
-            const climbText = ascent > 0 ? ` 📈+${Math.round(ascent)}m` : '';
+            const climbText = ascent > 0 ? ` 📈+${Math.round(ascent)}m` : (descent > 0 ? ` 📉-${Math.round(descent)}m` : '');
             div.innerHTML = `<strong>📍 第${i}地点</strong>: +${(wp.legDist/1000).toFixed(2)}km${climbText} (${formatTime(legTime)})`;
         }
         list.appendChild(div);
