@@ -120,6 +120,9 @@
         <div style="margin-bottom:8px;">
             <input id="routeNameInput" type="text" placeholder="ルート名" style="width:100%; padding:6px; border:1px solid #ccc; border-radius:4px; font-size:12px;">
         </div>
+        <div id="routeHeader" style="background: white; padding: 10px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 8px; font-size: 13px; line-height: 1.4;">
+            地点を選んでください。
+        </div>
         <div class="btn-group">
             <button id="undoBtn" onclick="undoLast()">↩️ 戻す</button>
             <button id="resetBtn" onclick="resetAll()">🗑️ クリア</button>
@@ -127,7 +130,7 @@
             <button id="kmlBtn" onclick="exportRoute('kml')">⬇️ KML</button>
         </div>
         <div id="routeStats" style="margin-top:8px; border-top:1px solid #eee; padding-top:6px; font-size:12px; line-height:1.4;">
-            <div id="routeStatus">白丸（分岐）または青丸（登山口）を選んでください。</div>
+            <div id="routeStatus"></div>
             <div id="routeSummary" style="margin-top:5px; font-weight:bold; color:#1565C0;"></div>
         </div>
         <div id="waypointList" style="margin-top:8px; max-height:150px; overflow-y:auto; border:1px solid #eee; border-radius:4px; padding:4px; font-size:11px; background:#fafafa;">
@@ -629,52 +632,58 @@ function formatTime(mins) {
 
 function updateSidebar() {
     const list = document.getElementById('waypointList');
+    if (!list) return;
     list.innerHTML = '';
     let cumulativeDist = 0;
     let cumulativeTime = 0;
+    let totalAscent = 0;
+    let totalDescent = 0;
 
     waypoints.forEach((wp, i) => {
         const div = document.createElement('div');
         div.style.borderBottom = '1px solid #eee';
         div.style.padding = '4px 0';
         
-        cumulativeDist += wp.legDist;
+        cumulativeDist += Number(wp.legDist || 0);
         
-        // Calculate climb/descent if we have elevation for both ends
+        // Calculate climb/descent
         let ascent = 0;
         let descent = 0;
         if (i > 0) {
             const prev = waypoints[i-1];
-            // Properly handle 0m altitude (sea level) and force Number type
             if (prev.ele !== undefined && wp.ele !== undefined && prev.ele !== null && wp.ele !== null) {
-                const pEle = Number(prev.ele);
-                const cEle = Number(wp.ele);
-                if (!isNaN(pEle) && !isNaN(cEle)) {
-                    const diff = cEle - pEle;
+                const pE = Number(prev.ele);
+                const cE = Number(wp.ele);
+                if (!isNaN(pE) && !isNaN(cE)) {
+                    const diff = cE - pE;
                     if (diff > 0) ascent = diff;
                     else descent = Math.abs(diff);
                 }
             }
         }
         
-        const legTime = calculateHikingTime(wp.legDist, ascent, descent);
+        totalAscent += ascent;
+        totalDescent += descent;
+        
+        const legTime = calculateHikingTime(Number(wp.legDist || 0), ascent, descent);
         cumulativeTime += legTime;
 
         if (i === 0) {
-            div.innerHTML = `<strong>🚩 START</strong> ${wp.ele ? `(${Math.round(wp.ele)}m)` : ''}`;
+            div.innerHTML = `<strong>🚩 START</strong> ${wp.ele !== undefined ? `(${Math.round(wp.ele)}m)` : ''}`;
         } else {
             const climbText = ascent > 0 ? ` 📈+${Math.round(ascent)}m` : (descent > 0 ? ` 📉-${Math.round(descent)}m` : '');
-            div.innerHTML = `<strong>📍 第${i}地点</strong>: +${(wp.legDist/1000).toFixed(2)}km${climbText} (${formatTime(legTime)})`;
+            div.innerHTML = `<strong>📍 第${i}地点</strong>: +${((wp.legDist || 0)/1000).toFixed(2)}km${climbText} (${formatTime(legTime)})`;
         }
         list.appendChild(div);
     });
 
-    const summary = document.getElementById('routeSummary');
-    if (waypoints.length >= 2) {
-        summary.innerHTML = `🏁 総距離: ${(cumulativeDist/1000).toFixed(2)}km <br> 🕒 予想時間: ${formatTime(cumulativeTime)}`;
-    } else {
-        summary.innerHTML = '';
-    }
+    const header = waypoints.length === 0 ? "次の地点を選んでください。" :
+                   `🚩 総距離: <strong>${(cumulativeDist/1000).toFixed(2)}km</strong><br>` +
+                   `⏱️ 予想時間: <strong>${formatTime(cumulativeTime)}</strong><br>` +
+                   `⛰️ 獲得標高: <strong>+${Math.round(totalAscent)}m</strong> / <strong>-${Math.round(totalDescent)}m</strong>`;
+    
+    const hEl = document.getElementById('routeHeader');
+    if (hEl) hEl.innerHTML = header;
 }
 
 function undoLast() {
