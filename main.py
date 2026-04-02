@@ -144,19 +144,22 @@ def build_trail_data(osm_json: dict) -> dict:
     # Final assembly
     referenced = {e["u"] for e in edges} | {e["v"] for e in edges}
     
-    # Peak Snapping: Connect isolated peaks to the nearest trail node
+    # Peak Snapping: Connect isolated peaks to the nearest network node (junctions only for speed)
+    snap_candidates = list(junction_ids) if junction_ids else list(referenced)
+    
     for pk in peaks:
         pk_id = pk["id"]
-        # If the peak is already in the graph, no need to snap
         if pk_id in referenced: continue
         
-        # Find nearest node already in the graph
-        best_dist = 300 # Max 300m for auto-snap
+        best_dist = 400 # Max 400m for auto-snap
         best_node = None
         pk_pos = [pk["lat"], pk["lon"]]
         
-        for rid in referenced:
+        for rid in snap_candidates:
             rpos = nodes[rid]
+            # Fast coarse filter: if lat/lon diff is > 0.005 (~500m), skip haversine
+            if abs(pk_pos[0]-rpos[0]) > 0.005 or abs(pk_pos[1]-rpos[1]) > 0.005: continue
+            
             d = haversine(pk_pos[0], pk_pos[1], rpos[0], rpos[1])
             if d < best_dist:
                 best_dist = d
