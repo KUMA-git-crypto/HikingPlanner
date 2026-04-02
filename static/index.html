@@ -560,6 +560,16 @@ function selectAlternative(idx, isInitial = false) {
     updateSidebar();
 }
 
+// ─── UTILS ───────────────────────────────────────────────────────────────────
+function haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const phi1 = lat1 * Math.PI / 180, phi2 = lat2 * Math.PI / 180;
+    const dphi = (lat2-lat1) * Math.PI / 180;
+    const dlam = (lon2-lon1) * Math.PI / 180;
+    const a = Math.sin(dphi/2)**2 + Math.cos(phi1)*Math.cos(phi2)*Math.sin(dlam/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
 function calculateHikingTime(meters) {
     if (meters === 0) return 0;
     // Assuming 3.5 km/h (about 17 min per km)
