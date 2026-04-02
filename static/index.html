@@ -252,9 +252,9 @@ function mergeTrailData(data) {
         if (renderedNodes.has(pk.id)) return;
         renderedNodes.add(pk.id);
         const marker = L.circleMarker([pk.lat, pk.lon], {
-            radius: 12, // Increased for easier clicking
+            radius: 18, // Extra large for guaranteed mobile selection
             fillColor: '#F44336', color: '#B71C1C',
-            weight: 3, opacity: 1, fillOpacity: 1.0,
+            weight: 3, opacity: 1, fillOpacity: 0.8,
             className: 'peak-marker',
             pane: 'peakPane'
         }).bindTooltip(pk.name, {permanent: true, direction: 'top', className: 'peak-label'});
@@ -623,12 +623,13 @@ function updateSidebar() {
         
         cumulativeDist += wp.legDist;
         
-        // Calculate climb/descent
+        // Calculate climb/descent if we have elevation for both ends
         let ascent = 0;
         let descent = 0;
         if (i > 0) {
             const prev = waypoints[i-1];
-            if (prev.ele && wp.ele) {
+            // Properly handle 0m altitude (sea level)
+            if (prev.ele !== undefined && wp.ele !== undefined && prev.ele !== null && wp.ele !== null) {
                 const diff = wp.ele - prev.ele;
                 if (diff > 0) ascent = diff;
                 else descent = Math.abs(diff);
