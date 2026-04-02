@@ -251,16 +251,19 @@ class ExportData(BaseModel):
 
 @app.get("/get-elevation")
 def get_elevation(lat: float, lon: float):
-    # Proxy to GSI (Geospatial Information Authority of Japan) API
-    # This is much more accurate for Japanese mountains than OSM
     try:
         url = f"https://msearch.gsi.go.jp/point-elevation/elevation.json?lon={lon}&lat={lat}"
         r = requests.get(url, timeout=5)
         if r.status_code == 200:
-            return r.json() # {"elevation": 123.4, "hsrc": "..."}
-        return {"elevation": 0}
+            data = r.json()
+            ele = data.get("elevation")
+            # GSI returns "----" for invalid/no-data areas
+            if isinstance(ele, (int, float)): return {"elevation": float(ele)}
+            try: return {"elevation": float(ele)}
+            except: return {"elevation": 0.0}
+        return {"elevation": 0.0}
     except:
-        return {"elevation": 0}
+        return {"elevation": 0.0}
 
 @app.post("/export/gpx")
 def export_gpx(data: ExportData):
