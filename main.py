@@ -211,16 +211,26 @@ def fetch_area(
     # Build an Overpass 'around' query (more precise than bbox on mobile)
     # Simple, explicit recursion query — most reliable across different mirrors
     query = (
-        f"[out:json][timeout:60];"
-        f"(way(around:{around})['highway'~'path|footway|track|steps|pedestrian'];"
-        f" way(around:{around})['highway'~'service|unclassified|residential'];"
-        f" node(around:{around})['natural'='peak'];"
-        f" node(around:{around})['place'='peak'];);"
-        f"(._;>;);"
-        f"out;"
+        f'[out:json][timeout:60];'
+        f'('
+        f'  way(around:{around})["highway"~"path|footway|track|steps|pedestrian"];'
+        f'  way(around:{around})["highway"~"service|unclassified|residential"];'
+        f'  node(around:{around})["natural"="peak"];'
+        f'  node(around:{around})["place"="peak"];'
+        f');'
+        f'(._;>;);'
+        f'out;'
     )
+    print(f"DEBUG: Fetching area {lat}, {lon} with radius {radius}km")
     osm_data = fetch_from_overpass(query)
+    elements = osm_data.get("elements", [])
+    print(f"DEBUG: Received {len(elements)} elements from OSM.")
+    
     trail_data = build_trail_data(osm_data)
+    wc = len(trail_data.get("e", []))
+    pc = len(trail_data.get("pk", []))
+    print(f"DEBUG: Processed {wc} edges and {pc} peaks.")
+    
     return trail_data
 
 
