@@ -71,12 +71,13 @@ def build_trail_data(osm_json: dict) -> dict:
         if el["type"] == "node" and "lat" in el:
             nid_str = str(el["id"])
             nodes[nid_str] = [el["lat"], el["lon"]]
-            if el.get("tags", {}).get("natural") == "peak":
+            tags = el.get("tags", {})
+            if tags.get("natural") == "peak" or tags.get("place") == "peak":
                 peaks.append({
                     "id": nid_str,
                     "lat": el["lat"],
                     "lon": el["lon"],
-                    "name": el.get("tags", {}).get("name", "山頂")
+                    "name": tags.get("name", tags.get("name:ja", "山頂"))
                 })
         elif el["type"] == "way":
             ways.append(el)
@@ -142,6 +143,10 @@ def build_trail_data(osm_json: dict) -> dict:
 
     # Final assembly
     referenced = {e["u"] for e in edges} | {e["v"] for e in edges}
+    # Important: Include peaks in referenced nodes so they appear in filtered_nodes
+    peak_ids = {p["id"] for p in peaks}
+    referenced |= peak_ids
+    
     filtered_nodes = {nid: nodes[nid] for nid in referenced if nid in nodes}
     junctions = {nid for nid in junction_ids if nid in referenced}
     trailheads = {nid for nid in trailhead_ids if nid in referenced}
@@ -177,7 +182,8 @@ def fetch_area(
         f"[out:json][timeout:60];"
         f"(way(around:{around})['highway'~'path|footway|track|steps|pedestrian'];"
         f" way(around:{around})['highway'~'service|unclassified|residential'];"
-        f" node(around:{around})['natural'='peak'];);"
+        f" node(around:{around})['natural'='peak'];"
+        f" node(around:{around})['place'='peak'];);"
         f"(._;>;);"
         f"out;"
     )
@@ -223,4 +229,4 @@ def export_kml(data: ExportData):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8012)
+    uvicorn.run(app, host="0.0.0.0", port=8021)
