@@ -362,13 +362,15 @@ async function fetchCurrentArea() {
 
     try {
         const res = await fetch(`/fetch-area?lat=${c.lat.toFixed(5)}&lon=${c.lng.toFixed(5)}&radius=${radius}`);
-        if (!res.ok) { const err = await res.json(); throw new Error(err.detail || `HTTP ${res.status}`); }
+        if (!res.ok) { let msg = `HTTP ${res.status}`; try { const err = await res.json(); msg = err.detail || msg; } catch(e){} throw new Error(msg); }
         const data = await res.json();
+        console.log('Fetched data:', data);
         mergeTrailData(data);
         switchMode('route'); // Switch to route mode after fetch
-        const ec = data.e.filter(e => e.t === 0).length;
+        const ec = data.e ? data.e.filter(e => e.t === 0).length : 0;
         document.getElementById('routeStatus').textContent = `取得完了！ 道の数: ${ec}。青丸（登山口）を選んで開始。`;
     } catch (e) {
+        console.error('Fetch Error:', e);
         statusEl.textContent = 'エラー: ' + e.message;
     } finally {
         btn.disabled = false;
