@@ -77,8 +77,17 @@ def build_trail_data(osm_json: dict) -> dict:
                     "id": nid_str,
                     "lat": el["lat"],
                     "lon": el["lon"],
-                    "name": tags.get("name", tags.get("name:ja", "山頂"))
+                    "name": tags.get("name", tags.get("name:ja", "山頂")),
+                    "ele": float(tags.get("ele", 0)) if tags.get("ele") else 0
                 })
+        elif el["type"] == "node" and "tags" in el:
+            # Collect other nodes that might have elevation info
+            nid_str = str(el["id"])
+            if nid_str not in nodes: # Already added in pass 1?
+                nodes[nid_str] = [el["lat"], el["lon"]]
+            # Store elevation in a separate dict if present
+            ele = el["tags"].get("ele")
+            if ele: nodes[nid_str + "_ele"] = float(ele)
         elif el["type"] == "way":
             ways.append(el)
 
@@ -144,21 +153,21 @@ def build_trail_data(osm_json: dict) -> dict:
     # Final assembly
     referenced = {e["u"] for e in edges} | {e["v"] for e in edges}
     
-    # Peak Snapping: Connect isolated peaks to the nearest network node (junctions only for speed)
+    # Peak Snapping: Connect isolated peaks to the nearest network node
     snap_candidates = list(junction_ids) if junction_ids else list(referenced)
     
     for pk in peaks:
         pk_id = pk["id"]
         if pk_id in referenced: continue
         
-        best_dist = 400 # Max 400m for auto-snap
+        best_dist = 1500 # Increased to 1.5km for remote peaks
         best_node = None
         pk_pos = [pk["lat"], pk["lon"]]
         
         for rid in snap_candidates:
             rpos = nodes[rid]
-            # Fast coarse filter: if lat/lon diff is > 0.005 (~500m), skip haversine
-            if abs(pk_pos[0]-rpos[0]) > 0.005 or abs(pk_pos[1]-rpos[1]) > 0.005: continue
+            # Coarse filter for 1.5km (~0.015 deg)
+            if abs(pk_pos[0]-rpos[0]) > 0.015 or abs(pk_pos[1]-rpos[1]) > 0.015: continue
             
             d = haversine(pk_pos[0], pk_pos[1], rpos[0], rpos[1])
             if d < best_dist:

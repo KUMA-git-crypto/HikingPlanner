@@ -230,12 +230,13 @@ function mergeTrailData(data) {
         if (e.c && e.c.length >= 2) {
             const latlngs = e.c.map(([ln, lt]) => [lt, ln]);
             const isConnector = e.t === 1;
+            const isPeakAccess = e.name === "山頂への連絡";
             L.polyline(latlngs, {
-                color: isConnector ? '#9E9E9E' : '#4CAF50',
-                weight: isConnector ? 1.5 : 2.5,
+                color: isPeakAccess ? '#FF9800' : (isConnector ? '#9E9E9E' : '#4CAF50'),
+                weight: isPeakAccess ? 2 : (isConnector ? 1.5 : 2.5),
                 opacity: isConnector ? 0.4 : 0.75,
-                dashArray: isConnector ? '4,6' : null,
-                interactive: false // Base trails don't intercept clicks
+                dashArray: isPeakAccess ? '5,5' : (isConnector ? '4,6' : null),
+                interactive: false
             }).addTo(edgeLayer);
         }
     }
@@ -451,9 +452,13 @@ function handleNodeClick(id, lat, lon) {
         return;
     }
     const label = waypoints.length === 0 ? 'スタート' : `地点 ${waypoints.length}`;
-    // interaction:false is crucial to allow clicking the node UNDER the marker for piston routes
     const marker = L.marker([lat, lon], { interactive: false }).addTo(map).bindPopup(label);
-    waypoints.push({ id, lat, lon, marker, legDist: 0 }); // Added legDist field
+    
+    // Check if this node has elevation info (from server peaks or tagged nodes)
+    let ele = 0;
+    if (graphNodes[id + "_ele"]) ele = graphNodes[id + "_ele"];
+    
+    waypoints.push({ id, lat, lon, marker, legDist: 0, ele: ele }); 
     updateSidebar();
 
     if (waypoints.length >= 2) {
@@ -572,18 +577,20 @@ function haversine(lat1, lon1, lat2, lon2) {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-function calculateHikingTime(meters) {
+function calculateHikingTime(meters, ascentMeters = 0) {
     if (meters === 0) return 0;
-    // Assuming 3.5 km/h (about 17 min per km)
-    // In future, elevation could be added for better accuracy
-    return Math.ceil(meters / 58.3); 
+    // Naismith's Rule: 1km = 12 min (5.0 km/h)
+    // + 1 min for every 10 meters of ascent
+    const horizontalMins = (meters / 1000) * 12;
+    const ascentMins = Math.max(0, ascentMeters / 10);
+    return Math.ceil(horizontalMins + ascentMins);
 }
 
 function formatTime(mins) {
     if (mins < 60) return `${mins}分`;
     const h = Math.floor(mins / 60);
     const m = mins % 60;
-    return `${h}時間${m}分`;
+    return `${h}時間${m || '0'}分`;
 }
 
 function updateSidebar() {
@@ -598,13 +605,24 @@ function updateSidebar() {
         div.style.padding = '4px 0';
         
         cumulativeDist += wp.legDist;
-        const legTime = calculateHikingTime(wp.legDist);
+        
+        // Calculate climb if elevation is known for both ends
+        let ascent = 0;
+        if (i > 0) {
+            const prev = waypoints[i-1];
+            if (prev.ele && wp.ele) {
+                ascent = Math.max(0, wp.ele - prev.ele);
+            }
+        }
+        
+        const legTime = calculateHikingTime(wp.legDist, ascent);
         cumulativeTime += legTime;
 
         if (i === 0) {
-            div.innerHTML = `<strong>🚩 START</strong>`;
+            div.innerHTML = `<strong>🚩 START</strong> ${wp.ele ? `(${wp.ele}m)` : ''}`;
         } else {
-            div.innerHTML = `<strong>📍 第${i}地点</strong>: +${(wp.legDist/1000).toFixed(2)}km (${formatTime(legTime)})`;
+            const climbText = ascent > 0 ? ` 📈+${Math.round(ascent)}m` : '';
+            div.innerHTML = `<strong>📍 第${i}地点</strong>: +${(wp.legDist/1000).toFixed(2)}km${climbText} (${formatTime(legTime)})`;
         }
         list.appendChild(div);
     });
