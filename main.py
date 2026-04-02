@@ -245,6 +245,33 @@ def export_kml(data: ExportData):
     return Response(content="\n".join(kml), media_type="application/vnd.google-earth.kml+xml",
                     headers={"Content-Disposition": f"attachment; filename={data.name}.kml"})
 
+@app.post("/export/gpx")
+def export_gpx(data: ExportData):
+    gpx = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<gpx version="1.1" creator="HikingPlanner" xmlns="http://www.topografix.com/GPX/1/1">',
+        f'  <metadata><name>{data.name}</name></metadata>',
+        '  <trk><name>Hiking Route</name><trkseg>'
+    ]
+    for p in data.points:
+        gpx.append(f'    <trkpt lat="{p.lat}" lon="{p.lon}"></trkpt>')
+    gpx.append('  </trkseg></trk></gpx>')
+    return Response(content="\n".join(gpx), media_type="application/gpx+xml",
+                    headers={"Content-Disposition": f"attachment; filename={data.name}.gpx"})
+
+@app.post("/export/kml")
+def export_kml(data: ExportData):
+    coords = " ".join([f"{p.lon},{p.lat},0" for p in data.points])
+    kml = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>',
+        f'  <name>{data.name}</name><Placemark><LineString>',
+        f'    <coordinates>{coords}</coordinates>',
+        '  </LineString></Placemark></Document></kml>'
+    ]
+    return Response(content="\n".join(kml), media_type="application/vnd.google-earth.kml+xml",
+                    headers={"Content-Disposition": f"attachment; filename={data.name}.kml"})
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8021)

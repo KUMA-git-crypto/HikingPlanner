@@ -510,20 +510,23 @@ function drawRoute(from, to) {
     }
 
     if (!paths || paths.length === 0) {
-        document.getElementById('routeStatus').textContent = '⚠️ 登山道が見つかりませんでした。別の地点を選んでください。';
-        undoLast();
-        return;
+        // FALLBACK: If disconnected, just bridge with a dashed line as requested
+        const gapPath = [from.id, to.id];
+        paths.push(gapPath);
+        document.getElementById('routeStatus').textContent = '⚠️ 登山道が繋がっていないため、直線（破線）で結びました。';
     }
 
     // Render alternatives
     paths.forEach((path, idx) => {
         const latlngs = path.map(id => graphNodes[id]);
         const isMain = idx === 0;
+        const isGap = path.length === 2 && !((graphEdges[path[0]] || []).some(e => e.to === path[1]));
+        
         const line = L.polyline(latlngs, {
-            color: isMain ? '#E91E63' : '#9C27B0',
+            color: isGap ? '#F44336' : (isMain ? '#E91E63' : '#9C27B0'),
             weight: isMain ? 6 : 4,
             opacity: isMain ? 0.9 : 0.4,
-            dashArray: isMain ? null : '5,5',
+            dashArray: isGap ? '10,10' : (isMain ? null : '5,5'),
             lineJoin: 'round', lineCap: 'round',
             interactive: true
         }).addTo(map);
@@ -533,7 +536,7 @@ function drawRoute(from, to) {
             selectAlternative(idx);
         });
 
-        currentAlternatives.push({ path, layer: line });
+        currentAlternatives.push({ path, layer: line, isGap });
     });
 
     selectAlternative(0, true);
@@ -554,29 +557,40 @@ function selectAlternative(idx, isInitial = false) {
     currentAlternatives.forEach((alt, i) => {
         const line = alt.layer;
         const isSelected = i === idx;
+        const isGap = alt.isGap;
         line.setStyle({
-            color: isSelected ? '#E91E63' : '#9C27B0',
+            color: isGap ? '#F44336' : (isSelected ? '#E91E63' : '#9C27B0'),
             weight: isSelected ? 6 : 4,
             opacity: isSelected ? 0.9 : 0.3,
-            dashArray: isSelected ? null : '5,5'
+            dashArray: isGap ? '10,10' : (isSelected ? null : '5,5')
         });
         if (isSelected) line.bringToFront();
     });
 
     // Add high-res version to routeLines for export
     const finalLine = L.polyline(selected.path.map(id => graphNodes[id]), {
-        color: '#E91E63', weight: 6, opacity: 0.9, 
+        color: selected.isGap ? '#F44336' : '#E91E63', 
+        weight: 6, opacity: 0.9, 
         lineJoin: 'round', lineCap: 'round',
-        interactive: false
+        interactive: false,
+        dashArray: selected.isGap ? '10,10' : null
     }).addTo(map);
     routeLines.push(finalLine);
 
     let totalLegDist = 0;
-    for (let i = 0; i < selected.path.length - 1; i++) {
-        const u = selected.path[i], v = selected.path[i+1];
-        const edge = (graphEdges[u] || []).find(e => e.to === v);
-        if (edge) totalLegDist += edge.dist;
-        else totalLegDist += haversine(graphNodes[u][0], graphNodes[u][1], graphNodes[v][0], graphNodes[v][1]);
+    const isGap = selected.isGap;
+    
+    if (isGap) {
+        const fromPos = graphNodes[selected.path[0]] || [from.lat, from.lon];
+        const toPos = graphNodes[selected.path[1]] || [to.lat, to.lon];
+        totalLegDist = haversine(fromPos[0], fromPos[1], toPos[0], toPos[1]);
+    } else {
+        for (let i = 0; i < selected.path.length - 1; i++) {
+            const u = selected.path[i], v = selected.path[i+1];
+            const edge = (graphEdges[u] || []).find(e => e.to === v);
+            if (edge) totalLegDist += edge.dist;
+            else totalLegDist += haversine(graphNodes[u][0], graphNodes[u][1], graphNodes[v][0], graphNodes[v][1]);
+        }
     }
 
     // Save distance to the last waypoint
