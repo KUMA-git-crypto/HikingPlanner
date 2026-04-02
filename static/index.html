@@ -117,9 +117,6 @@
             <h3 style="margin:0">📍 ルート作成</h3>
             <button onclick="switchMode('search')" style="width:auto; margin:0; background:#eee; color:#333; padding:4px 8px; font-size:10px;">← 検索へ戻る</button>
         </div>
-        <div style="margin-bottom:8px;">
-            <input id="routeNameInput" type="text" placeholder="ルート名" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; font-size:14px;">
-        </div>
         <div id="routeStatus" style="background: white; padding: 10px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 8px; font-size: 15px; font-weight: bold; color: #2C3E50;">
             地点を選んでください。
         </div>
@@ -687,7 +684,7 @@ async function exportRoute(format) {
     routeLines.forEach(line => {
         line.getLatLngs().forEach(ll => allPoints.push({ lat: ll.lat, lon: ll.lng }));
     });
-    const fileName = document.getElementById('routeNameInput').value || 'HikingRoute';
+    const fileName = document.getElementById('searchInput').value || 'HikingRoute';
     const res = await fetch(`/export/${format}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
