@@ -118,9 +118,9 @@
             <button onclick="switchMode('search')" style="width:auto; margin:0; background:#eee; color:#333; padding:4px 8px; font-size:10px;">← 検索へ戻る</button>
         </div>
         <div style="margin-bottom:8px;">
-            <input id="routeNameInput" type="text" placeholder="ルート名" style="width:100%; padding:6px; border:1px solid #ccc; border-radius:4px; font-size:12px;">
+            <input id="routeNameInput" type="text" placeholder="ルート名" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; font-size:14px;">
         </div>
-        <div id="routeHeader" style="background: white; padding: 10px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 8px; font-size: 13px; line-height: 1.4;">
+        <div id="routeStatus" style="background: white; padding: 10px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 8px; font-size: 15px; font-weight: bold; color: #2C3E50;">
             地点を選んでください。
         </div>
         <div class="btn-group">
@@ -129,11 +129,9 @@
             <button id="gpxBtn" onclick="exportRoute('gpx')">⬇️ GPX</button>
             <button id="kmlBtn" onclick="exportRoute('kml')">⬇️ KML</button>
         </div>
-        <div id="routeStats" style="margin-top:8px; border-top:1px solid #eee; padding-top:6px; font-size:12px; line-height:1.4;">
-            <div id="routeStatus"></div>
-            <div id="routeSummary" style="margin-top:5px; font-weight:bold; color:#1565C0;"></div>
-        </div>
-        <div id="waypointList" style="margin-top:8px; max-height:150px; overflow-y:auto; border:1px solid #eee; border-radius:4px; padding:4px; font-size:11px; background:#fafafa;">
+        <div id="routeStats" style="display:none;"></div>
+        <div id="waypointList" style="margin-top:10px; border-top:1px solid #eee; padding-top:8px; font-size:13px;"></div>
+    </div>
             <!-- Waypoints will be listed here -->
         </div>
     </div>
@@ -512,23 +510,20 @@ function drawRoute(from, to) {
     }
 
     if (!paths || paths.length === 0) {
-        // GAP DETECTION: Allowing the point but showing it as a gap
-        const gapPath = [from.id, to.id];
-        paths.push(gapPath);
-        document.getElementById('routeStatus').textContent = '⚠️ 登山道が繋がっていないため、直線（破線）で結びました。';
+        document.getElementById('routeStatus').textContent = '⚠️ 登山道が見つかりませんでした。別の地点を選んでください。';
+        undoLast();
+        return;
     }
 
     // Render alternatives
     paths.forEach((path, idx) => {
         const latlngs = path.map(id => graphNodes[id]);
         const isMain = idx === 0;
-        const isGap = path.length === 2 && !((graphEdges[path[0]] || []).some(e => e.to === path[1]));
-        
         const line = L.polyline(latlngs, {
-            color: isGap ? '#F44336' : (isMain ? '#E91E63' : '#9C27B0'),
+            color: isMain ? '#E91E63' : '#9C27B0',
             weight: isMain ? 6 : 4,
             opacity: isMain ? 0.9 : 0.4,
-            dashArray: isGap ? '10,10' : (isMain ? null : '5,5'),
+            dashArray: isMain ? null : '5,5',
             lineJoin: 'round', lineCap: 'round',
             interactive: true
         }).addTo(map);
@@ -538,7 +533,7 @@ function drawRoute(from, to) {
             selectAlternative(idx);
         });
 
-        currentAlternatives.push({ path, layer: line, isGap });
+        currentAlternatives.push({ path, layer: line });
     });
 
     selectAlternative(0, true);
@@ -559,47 +554,29 @@ function selectAlternative(idx, isInitial = false) {
     currentAlternatives.forEach((alt, i) => {
         const line = alt.layer;
         const isSelected = i === idx;
-        const isGap = alt.isGap;
         line.setStyle({
-            color: isGap ? '#F44336' : (isSelected ? '#E91E63' : '#9C27B0'),
+            color: isSelected ? '#E91E63' : '#9C27B0',
             weight: isSelected ? 6 : 4,
             opacity: isSelected ? 0.9 : 0.3,
-            dashArray: isGap ? '10,10' : (isSelected ? null : '5,5')
+            dashArray: isSelected ? null : '5,5'
         });
         if (isSelected) line.bringToFront();
     });
 
     // Add high-res version to routeLines for export
     const finalLine = L.polyline(selected.path.map(id => graphNodes[id]), {
-        color: selected.isGap ? '#F44336' : '#E91E63', 
-        weight: 6, opacity: 0.9, 
+        color: '#E91E63', weight: 6, opacity: 0.9, 
         lineJoin: 'round', lineCap: 'round',
-        interactive: false,
-        dashArray: selected.isGap ? '10,10' : null
+        interactive: false
     }).addTo(map);
     routeLines.push(finalLine);
 
     let totalLegDist = 0;
-    const isGap = selected.isGap;
-    
-    if (isGap) {
-        // Safe Coordinate Retrieval
-        const fromLat = graphNodes[selected.path[0]] ? graphNodes[selected.path[0]][0] : from.lat;
-        const fromLon = graphNodes[selected.path[0]] ? graphNodes[selected.path[0]][1] : from.lon;
-        const toLat = graphNodes[selected.path[1]] ? graphNodes[selected.path[1]][0] : to.lat;
-        const toLon = graphNodes[selected.path[1]] ? graphNodes[selected.path[1]][1] : to.lon;
-        totalLegDist = haversine(fromLat, fromLon, toLat, toLon);
-    } else {
-        for (let i = 0; i < selected.path.length - 1; i++) {
-            const u = selected.path[i], v = selected.path[i+1];
-            const edge = (graphEdges[u] || []).find(e => e.to === v);
-            if (edge) {
-                totalLegDist += edge.dist;
-            } else {
-                const uPos = graphNodes[u], vPos = graphNodes[v];
-                if (uPos && vPos) totalLegDist += haversine(uPos[0], uPos[1], vPos[0], vPos[1]);
-            }
-        }
+    for (let i = 0; i < selected.path.length - 1; i++) {
+        const u = selected.path[i], v = selected.path[i+1];
+        const edge = (graphEdges[u] || []).find(e => e.to === v);
+        if (edge) totalLegDist += edge.dist;
+        else totalLegDist += haversine(graphNodes[u][0], graphNodes[u][1], graphNodes[v][0], graphNodes[v][1]);
     }
 
     // Save distance to the last waypoint
@@ -640,56 +617,26 @@ function updateSidebar() {
     const list = document.getElementById('waypointList');
     if (!list) return;
     list.innerHTML = '';
-    let cumulativeDist = 0;
-    let cumulativeTime = 0;
-    let totalAscent = 0;
-    let totalDescent = 0;
+    let totalD = 0;
 
     waypoints.forEach((wp, i) => {
         const div = document.createElement('div');
         div.style.borderBottom = '1px solid #eee';
-        div.style.padding = '4px 0';
-        
-        cumulativeDist += Number(wp.legDist || 0);
-        
-        // Calculate climb/descent
-        let ascent = 0;
-        let descent = 0;
-        if (i > 0) {
-            const prev = waypoints[i-1];
-            if (prev.ele !== undefined && wp.ele !== undefined && prev.ele !== null && wp.ele !== null) {
-                const pE = Number(prev.ele);
-                const cE = Number(wp.ele);
-                if (!isNaN(pE) && !isNaN(cE)) {
-                    const diff = cE - pE;
-                    if (diff > 0) ascent = diff;
-                    else descent = Math.abs(diff);
-                }
-            }
-        }
-        
-        totalAscent += ascent;
-        totalDescent += descent;
-        
-        const legTime = calculateHikingTime(Number(wp.legDist || 0), ascent, descent);
-        cumulativeTime += legTime;
+        div.style.padding = '6px 0';
+        totalD += (wp.legDist || 0);
 
         if (i === 0) {
-            div.innerHTML = `<strong>🚩 START</strong> ${wp.ele !== undefined ? `(${Math.round(wp.ele)}m)` : ''}`;
+            div.innerHTML = `<strong>🚩 START</strong>`;
         } else {
-            const climbText = ascent > 0 ? ` 📈+${Math.round(ascent)}m` : (descent > 0 ? ` 📉-${Math.round(descent)}m` : '');
-            div.innerHTML = `<strong>📍 第${i}地点</strong>: +${((wp.legDist || 0)/1000).toFixed(2)}km${climbText} (${formatTime(legTime)})`;
+            div.innerHTML = `<strong>📍 第${i}地点</strong>: +${((wp.legDist || 0)/1000).toFixed(2)}km`;
         }
         list.appendChild(div);
     });
 
-    const header = waypoints.length === 0 ? "次の地点を選んでください。" :
-                   `🚩 総距離: <strong>${(cumulativeDist/1000).toFixed(2)}km</strong><br>` +
-                   `⏱️ 予想時間: <strong>${formatTime(cumulativeTime)}</strong><br>` +
-                   `⛰️ 獲得標高: <strong>+${Math.round(totalAscent)}m</strong> / <strong>-${Math.round(totalDescent)}m</strong>`;
-    
-    const hEl = document.getElementById('routeHeader');
-    if (hEl) hEl.innerHTML = header;
+    const statusObj = document.getElementById('routeStatus');
+    if (statusObj) {
+        statusObj.innerHTML = totalD > 0 ? `🏁 総距離: <strong>${(totalD/1000).toFixed(2)}km</strong>` : "地点を選んでください。";
+    }
 }
 
 function undoLast() {

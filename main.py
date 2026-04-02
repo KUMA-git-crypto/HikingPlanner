@@ -153,52 +153,20 @@ def build_trail_data(osm_json: dict) -> dict:
     # 4. Final assembly
     referenced = {e["u"] for e in edges} | {e["v"] for e in edges}
     
-    # Peak Snapping & Forced Inclusion
-    # Ensure all peaks have node data even if not referenced yet
-    for pk in peaks:
-        pk_id = pk["id"]
-        if pk_id not in nodes:
-            nodes[pk_id] = [pk["lat"], pk["lon"]]
-        
-        # Snap if not referenced
-        if pk_id in referenced: continue
-        snap_candidates = list(junction_ids) if junction_ids else list(referenced)
-        best_dist, best_node = 1500, None
-        pk_pos = nodes[pk_id]
-        for rid in snap_candidates:
-            rpos = nodes[rid]
-            if abs(pk_pos[0]-rpos[0]) > 0.015 or abs(pk_pos[1]-rpos[1]) > 0.015: continue
-            d = haversine(pk_pos[0], pk_pos[1], rpos[0], rpos[1])
-            if d < best_dist:
-                best_dist, best_node = d, rid
-        
-        if best_node:
-            edges.append({
-                "u": pk_id, "v": best_node, "d": round(best_dist, 1), "name": "山頂への連絡",
-                "c": [[pk_pos[1], pk_pos[0]], [nodes[best_node][1], nodes[best_node][0]]],
-                "t": 0
-            })
-            edges.append({
-                "u": best_node, "v": pk_id, "d": round(best_dist, 1), "name": "山頂への連絡",
-                "c": [[nodes[best_node][1], nodes[best_node][0]], [pk_pos[1], pk_pos[0]]],
-                "t": 0
-            })
-            referenced.add(pk_id)
-        else:
-            # Still include the peak node even if not connected!
-            referenced.add(pk_id)
-
+    # 4. Final assembly
+    referenced = {e["u"] for e in edges} | {e["v"] for e in edges}
+    
     filtered_nodes = {nid: nodes[nid] for nid in referenced if nid in nodes}
-    # Add elevation suffix for frontend (Fix: avoiding dict mutation during iteration)
-    ele_data = {}
-    for nid in filtered_nodes:
-        ele_key = nid + "_ele"
-        if ele_key in nodes:
-            ele_data[ele_key] = nodes[ele_key]
-    filtered_nodes.update(ele_data)
-
     junctions = {nid for nid in junction_ids if nid in referenced}
     trailheads = {nid for nid in trailhead_ids if nid in referenced}
+
+    return {
+        "n": filtered_nodes, 
+        "jn": list(junctions), 
+        "th": list(trailheads),
+        "pk": peaks,
+        "e": edges
+    }
 
     return {
         "n": filtered_nodes, 
@@ -250,22 +218,6 @@ class RoutePoint(BaseModel):
 class ExportData(BaseModel):
     name: str = "Hiking Route"
     points: List[RoutePoint]
-
-@app.get("/get-elevation")
-def get_elevation(lat: float, lon: float):
-    try:
-        url = f"https://msearch.gsi.go.jp/point-elevation/elevation.json?lon={lon}&lat={lat}"
-        r = requests.get(url, timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            ele = data.get("elevation")
-            # GSI returns "----" for invalid/no-data areas
-            if isinstance(ele, (int, float)): return {"elevation": float(ele)}
-            try: return {"elevation": float(ele)}
-            except: return {"elevation": 0.0}
-        return {"elevation": 0.0}
-    except:
-        return {"elevation": 0.0}
 
 @app.post("/export/gpx")
 def export_gpx(data: ExportData):
