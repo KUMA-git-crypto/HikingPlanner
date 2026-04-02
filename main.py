@@ -143,10 +143,39 @@ def build_trail_data(osm_json: dict) -> dict:
 
     # Final assembly
     referenced = {e["u"] for e in edges} | {e["v"] for e in edges}
-    # Important: Include peaks in referenced nodes so they appear in filtered_nodes
-    peak_ids = {p["id"] for p in peaks}
-    referenced |= peak_ids
     
+    # Peak Snapping: Connect isolated peaks to the nearest trail node
+    for pk in peaks:
+        pk_id = pk["id"]
+        # If the peak is already in the graph, no need to snap
+        if pk_id in referenced: continue
+        
+        # Find nearest node already in the graph
+        best_dist = 300 # Max 300m for auto-snap
+        best_node = None
+        pk_pos = [pk["lat"], pk["lon"]]
+        
+        for rid in referenced:
+            rpos = nodes[rid]
+            d = haversine(pk_pos[0], pk_pos[1], rpos[0], rpos[1])
+            if d < best_dist:
+                best_dist = d
+                best_node = rid
+        
+        if best_node:
+            # Add virtual edge (bidirectional)
+            edges.append({
+                "u": pk_id, "v": best_node, "d": round(best_dist, 1), "name": "山頂への連絡",
+                "c": [[pk_pos[1], pk_pos[0]], [nodes[best_node][1], nodes[best_node][0]]],
+                "t": 0 # Regular trail weight
+            })
+            edges.append({
+                "u": best_node, "v": pk_id, "d": round(best_dist, 1), "name": "山頂への連絡",
+                "c": [[nodes[best_node][1], nodes[best_node][0]], [pk_pos[1], pk_pos[0]]],
+                "t": 0
+            })
+            referenced.add(pk_id)
+
     filtered_nodes = {nid: nodes[nid] for nid in referenced if nid in nodes}
     junctions = {nid for nid in junction_ids if nid in referenced}
     trailheads = {nid for nid in trailhead_ids if nid in referenced}

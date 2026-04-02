@@ -239,6 +239,7 @@ function mergeTrailData(data) {
     // Junctions (white), Trailheads (Blue), and Peaks (Triangle)
     const junctionSet = new Set(data.jn || []);
     const trailheadSet = new Set(data.th || []);
+    const peakCoords = (data.pk || []).map(p => [p.lat, p.lon]);
     
     // Render Peaks first (▲)
     (data.pk || []).forEach(pk => {
@@ -248,7 +249,7 @@ function mergeTrailData(data) {
             radius: 9, fillColor: '#F44336', color: '#B71C1C',
             weight: 2, opacity: 1, fillOpacity: 0.9,
             className: 'peak-marker',
-            pane: 'peakPane' // Priority!
+            pane: 'peakPane'
         }).bindTooltip(pk.name, {permanent: true, direction: 'top', className: 'peak-label'});
         
         marker.on('click', (ev) => {
@@ -263,14 +264,24 @@ function mergeTrailData(data) {
         const isJN = junctionSet.has(id);
         if (!isTH && !isJN) continue; 
         if (renderedNodes.has(id)) continue;
-        renderedNodes.add(id);
 
+        // Spatial deduplication: if this junction is very close to a peak, skip it
+        const isTooCloseToPeak = peakCoords.some(pc => {
+            const d = haversine(pos[0], pos[1], pc[0], pc[1]);
+            return d < 5; // 5 meters
+        });
+        if (isTooCloseToPeak) {
+            renderedNodes.add(id); // Mark as done so we don't render it
+            continue;
+        }
+
+        renderedNodes.add(id);
         const marker = L.circleMarker([pos[0], pos[1]], {
             radius: isTH ? 8 : 6, 
             fillColor: isTH ? '#2196F3' : 'white', 
             color: '#333',
             weight: 2, opacity: 0.9, fillOpacity: 0.95,
-            pane: 'markerPane' // Priority!
+            pane: 'markerPane'
         });
         marker.on('click', (ev) => {
             L.DomEvent.stopPropagation(ev);
