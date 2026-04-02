@@ -126,8 +126,12 @@
             <button id="gpxBtn" onclick="exportRoute('gpx')">⬇️ GPX</button>
             <button id="kmlBtn" onclick="exportRoute('kml')">⬇️ KML</button>
         </div>
-        <div class="info" id="routeStatus" style="margin-top:8px; border-top:1px solid #eee; padding-top:6px;">
-            白丸（分岐）または青丸（登山口）を選んでください。
+        <div id="routeStats" style="margin-top:8px; border-top:1px solid #eee; padding-top:6px; font-size:12px; line-height:1.4;">
+            <div id="routeStatus">白丸（分岐）または青丸（登山口）を選んでください。</div>
+            <div id="routeSummary" style="margin-top:5px; font-weight:bold; color:#1565C0;"></div>
+        </div>
+        <div id="waypointList" style="margin-top:8px; max-height:150px; overflow-y:auto; border:1px solid #eee; border-radius:4px; padding:4px; font-size:11px; background:#fafafa;">
+            <!-- Waypoints will be listed here -->
         </div>
     </div>
 </div>
@@ -447,7 +451,7 @@ function handleNodeClick(id, lat, lon) {
     const label = waypoints.length === 0 ? 'スタート' : `地点 ${waypoints.length}`;
     // interaction:false is crucial to allow clicking the node UNDER the marker for piston routes
     const marker = L.marker([lat, lon], { interactive: false }).addTo(map).bindPopup(label);
-    waypoints.push({ id, lat, lon, marker });
+    waypoints.push({ id, lat, lon, marker, legDist: 0 }); // Added legDist field
     updateSidebar();
 
     if (waypoints.length >= 2) {
@@ -543,30 +547,62 @@ function selectAlternative(idx, isInitial = false) {
     routeLines.push(finalLine);
 
     // Sum distance using edge.dist from the server for absolute consistency
-    let totalDist = 0;
+    let totalLegDist = 0;
     for (let i = 0; i < selected.path.length - 1; i++) {
         const u = selected.path[i], v = selected.path[i+1];
         const edge = (graphEdges[u] || []).find(e => e.to === v);
-        if (edge) totalDist += edge.dist;
+        if (edge) totalLegDist += edge.dist;
     }
 
-    const distText = `ルート${idx+1}を選択中(${(totalDist/1000).toFixed(2)}km)。別の線クリックで切替可。`;
-    document.getElementById('routeStatus').textContent = distText;
+    // Save distance to the last waypoint
+    waypoints[waypoints.length - 1].legDist = totalLegDist;
+
     updateSidebar();
 }
 
-// Haversine in JS (mirrors the server-side Python)
-function haversine(lat1, lon1, lat2, lon2) {
-    const R = 6371000;
-    const phi1 = lat1 * Math.PI / 180, phi2 = lat2 * Math.PI / 180;
-    const dphi = (lat2-lat1) * Math.PI / 180;
-    const dlam = (lon2-lon1) * Math.PI / 180;
-    const a = Math.sin(dphi/2)**2 + Math.cos(phi1)*Math.cos(phi2)*Math.sin(dlam/2)**2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+function calculateHikingTime(meters) {
+    if (meters === 0) return 0;
+    // Assuming 3.5 km/h (about 17 min per km)
+    // In future, elevation could be added for better accuracy
+    return Math.ceil(meters / 58.3); 
+}
+
+function formatTime(mins) {
+    if (mins < 60) return `${mins}分`;
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return `${h}時間${m}分`;
 }
 
 function updateSidebar() {
-    // Hidden as per user request
+    const list = document.getElementById('waypointList');
+    list.innerHTML = '';
+    let cumulativeDist = 0;
+    let cumulativeTime = 0;
+
+    waypoints.forEach((wp, i) => {
+        const div = document.createElement('div');
+        div.style.borderBottom = '1px solid #eee';
+        div.style.padding = '4px 0';
+        
+        cumulativeDist += wp.legDist;
+        const legTime = calculateHikingTime(wp.legDist);
+        cumulativeTime += legTime;
+
+        if (i === 0) {
+            div.innerHTML = `<strong>🚩 START</strong>`;
+        } else {
+            div.innerHTML = `<strong>📍 第${i}地点</strong>: +${(wp.legDist/1000).toFixed(2)}km (${formatTime(legTime)})`;
+        }
+        list.appendChild(div);
+    });
+
+    const summary = document.getElementById('routeSummary');
+    if (waypoints.length >= 2) {
+        summary.innerHTML = `🏁 総距離: ${(cumulativeDist/1000).toFixed(2)}km <br> 🕒 予想時間: ${formatTime(cumulativeTime)}`;
+    } else {
+        summary.innerHTML = '';
+    }
 }
 
 function undoLast() {
