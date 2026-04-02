@@ -60,6 +60,7 @@ def fetch_from_overpass(query: str) -> dict:
                 break
     raise HTTPException(status_code=503, detail="Overpass API (all mirrors) unavailable. Please try again later.")
 
+def build_trail_data(osm_json: dict) -> dict:
     elements = osm_json.get("elements", [])
     nodes = {}  # str(id) -> [lat, lon]
     ways = []
