@@ -265,6 +265,11 @@ function mergeTrailData(data) {
     });
 
     for (const [id, pos] of Object.entries(data.n)) {
+        if (id.endsWith("_ele")) {
+            graphNodes[id] = pos; // Pos is a float elevation here
+            continue;
+        }
+
         const isTH = trailheadSet.has(id);
         const isJN = junctionSet.has(id);
         if (!isTH && !isJN) continue; 
@@ -273,12 +278,9 @@ function mergeTrailData(data) {
         // Spatial deduplication: if this junction is very close to a peak, skip it
         const isTooCloseToPeak = peakCoords.some(pc => {
             const d = haversine(pos[0], pos[1], pc[0], pc[1]);
-            return d < 5; // 5 meters
+            return d < 12; // Increased to 12m to give peaks priority
         });
-        if (isTooCloseToPeak) {
-            renderedNodes.add(id); // Mark as done so we don't render it
-            continue;
-        }
+        if (isTooCloseToPeak) continue;
 
         renderedNodes.add(id);
         const marker = L.circleMarker([pos[0], pos[1]], {

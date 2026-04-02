@@ -150,36 +150,33 @@ def build_trail_data(osm_json: dict) -> dict:
                         "t": 1 if is_connector else 0
                     })
 
-    # Final assembly
+    # 4. Final assembly
     referenced = {e["u"] for e in edges} | {e["v"] for e in edges}
     
-    # Peak Snapping: Connect isolated peaks to the nearest network node
-    snap_candidates = list(junction_ids) if junction_ids else list(referenced)
-    
+    # Peak Snapping & Forced Inclusion
+    # Ensure all peaks have node data even if not referenced yet
     for pk in peaks:
         pk_id = pk["id"]
+        if pk_id not in nodes:
+            nodes[pk_id] = [pk["lat"], pk["lon"]]
+        
+        # Snap if not referenced
         if pk_id in referenced: continue
-        
-        best_dist = 1500 # Increased to 1.5km for remote peaks
-        best_node = None
-        pk_pos = [pk["lat"], pk["lon"]]
-        
+        snap_candidates = list(junction_ids) if junction_ids else list(referenced)
+        best_dist, best_node = 1500, None
+        pk_pos = nodes[pk_id]
         for rid in snap_candidates:
             rpos = nodes[rid]
-            # Coarse filter for 1.5km (~0.015 deg)
             if abs(pk_pos[0]-rpos[0]) > 0.015 or abs(pk_pos[1]-rpos[1]) > 0.015: continue
-            
             d = haversine(pk_pos[0], pk_pos[1], rpos[0], rpos[1])
             if d < best_dist:
-                best_dist = d
-                best_node = rid
+                best_dist, best_node = d, rid
         
         if best_node:
-            # Add virtual edge (bidirectional)
             edges.append({
                 "u": pk_id, "v": best_node, "d": round(best_dist, 1), "name": "山頂への連絡",
                 "c": [[pk_pos[1], pk_pos[0]], [nodes[best_node][1], nodes[best_node][0]]],
-                "t": 0 # Regular trail weight
+                "t": 0
             })
             edges.append({
                 "u": best_node, "v": pk_id, "d": round(best_dist, 1), "name": "山頂への連絡",
@@ -187,8 +184,17 @@ def build_trail_data(osm_json: dict) -> dict:
                 "t": 0
             })
             referenced.add(pk_id)
+        else:
+            # Still include the peak node even if not connected!
+            referenced.add(pk_id)
 
     filtered_nodes = {nid: nodes[nid] for nid in referenced if nid in nodes}
+    # Add elevation suffix for frontend
+    for nid, pos in filtered_nodes.items():
+        ele_key = nid + "_ele"
+        if ele_key in nodes:
+            filtered_nodes[ele_key] = nodes[ele_key]
+
     junctions = {nid for nid in junction_ids if nid in referenced}
     trailheads = {nid for nid in trailhead_ids if nid in referenced}
 
@@ -217,27 +223,20 @@ def fetch_area(
 ):
     radius = min(radius, 20.0)
     around_meters = int(radius * 1000)
+    # Reverting to the most stable multi-line Union query format
     query = (
-        f'[out:json][timeout:60];'
-        f'('
-        f'way(around:{around_meters},{lat},{lon})["highway"~"path|footway|track|steps|pedestrian"]; '
-        f'way(around:{around_meters},{lat},{lon})["highway"~"service|unclassified|residential"]; '
-        f'node(around:{around_meters},{lat},{lon})["natural"="peak"]; '
-        f'node(around:{around_meters},{lat},{lon})["place"="peak"];'
-        f');(._;>;);out;'
+        f"[out:json][timeout:60];"
+        f"("
+        f'  way(around:{around_meters},{lat},{lon})["highway"~"path|footway|track|steps|pedestrian"];'
+        f'  way(around:{around_meters},{lat},{lon})["highway"~"service|unclassified|residential"];'
+        f'  node(around:{around_meters},{lat},{lon})["natural"="peak"];'
+        f'  node(around:{around_meters},{lat},{lon})["place"="peak"];'
+        f");"
+        f"(._;>;);"
+        f"out;"
     )
-    print(f"DEBUG: Q: {query}")
     osm_data = fetch_from_overpass(query)
-    elements = osm_data.get("elements", [])
-    print(f"DEBUG: Received {len(elements)} elements.")
-    if not elements:
-        print("WARNING: OSM returned 0 elements. Area might be empty or query failed.")
-    
     trail_data = build_trail_data(osm_data)
-    ec = len(trail_data.get("e", []))
-    nc = len(trail_data.get("n", {}))
-    print(f"DEBUG: Final data - Edges: {ec}, Nodes: {nc}")
-    
     return trail_data
 
 
