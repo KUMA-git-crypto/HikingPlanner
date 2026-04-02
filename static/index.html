@@ -28,9 +28,24 @@
             .btn-group { display: flex; flex-wrap: wrap; gap: 3px; }
             .btn-group button { flex: 1; min-width: 45%; padding: 5px; font-size: 11px; margin-bottom: 0; white-space: nowrap; }
             #fetchBtn { padding: 8px; font-size: 11px; margin-bottom: 4px; }
+            
+            #searchResults {
+                position: absolute; top: 100%; left: 0; right: 0; 
+                background: white; border: 1px solid #ccc; border-radius: 4px; 
+                z-index: 2000; max-height: 150px; overflow-y: auto; box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            }
+            .search-item { padding: 8px; border-bottom: 1px solid #eee; cursor: pointer; font-size: 11px; }
+            .search-item:hover { background: #f5f5f5; }
+            
             .info { display: none; }
             h3 { font-size: 11px; margin-bottom: 3px; display: none; }
             .radius-row { margin-top: 2px; font-size: 10px; }
+
+            .peak-label { 
+                background: rgba(255,255,255,0.85); border: 1px solid #B71C1C; 
+                color: #B71C1C; font-weight: bold; border-radius: 3px;
+                padding: 1px 4px; font-size: 11px;
+            }
         }
         h3 { margin: 0 0 10px; font-size: 16px; color: #222; }
         .info { font-size: 13px; margin-bottom: 10px; line-height: 1.4; color: #444; }
@@ -73,9 +88,12 @@
     <!-- SEARCH PHASE -->
     <div id="searchPhase">
         <h3>⛰️ 登山エリアを探す</h3>
-        <div style="display:flex; gap:5px; margin-bottom:8px;">
-            <input id="searchInput" type="text" placeholder="例: 富士山, 八ヶ岳..." style="flex:1; padding:8px; border:1px solid #ccc; border-radius:4px;">
+        <div style="display:flex; gap:5px; margin-bottom:8px; position:relative;">
+            <input id="searchInput" type="text" placeholder="例: 富士山, 八ヶ岳..." 
+                   onkeydown="if(event.key==='Enter') searchLocation()"
+                   style="flex:1; padding:8px; border:1px solid #ccc; border-radius:4px;">
             <button onclick="searchLocation()" style="width:auto; margin:0; background:#4CAF50; padding:8px 12px;">🔍</button>
+            <div id="searchResults" style="display:none"></div>
         </div>
         <div class="info" id="status">山名などで検索するか、地図を移動して「取得」を押してください。</div>
         <div id="loadingBar"></div>
@@ -206,10 +224,27 @@ function mergeTrailData(data) {
         }
     }
 
-    // Junctions (white) and Trailheads (Blue)
+    // Junctions (white), Trailheads (Blue), and Peaks (Triangle)
     const junctionSet = new Set(data.jn || []);
     const trailheadSet = new Set(data.th || []);
     
+    // Render Peaks first (▲)
+    (data.pk || []).forEach(pk => {
+        if (renderedNodes.has(pk.id)) return;
+        renderedNodes.add(pk.id);
+        const marker = L.circleMarker([pk.lat, pk.lon], {
+            radius: 9, fillColor: '#F44336', color: '#B71C1C',
+            weight: 2, opacity: 1, fillOpacity: 0.9,
+            className: 'peak-marker'
+        }).bindTooltip(pk.name, {permanent: true, direction: 'top', className: 'peak-label'});
+        
+        marker.on('click', (ev) => {
+            L.DomEvent.stopPropagation(ev);
+            handleNodeClick(pk.id, pk.lat, pk.lon);
+        });
+        marker.addTo(nodeLayer);
+    });
+
     for (const [id, pos] of Object.entries(data.n)) {
         const isTH = trailheadSet.has(id);
         const isJN = junctionSet.has(id);
@@ -238,21 +273,38 @@ async function searchLocation() {
     const q = document.getElementById('searchInput').value;
     if (!q) return;
     statusEl.textContent = `${q} を検索中...`;
+    const resDiv = document.getElementById('searchResults');
+    resDiv.innerHTML = '<div class="search-item">検索中...</div>';
+    resDiv.style.display = 'block';
+
     try {
-        const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`);
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=10&countrycodes=jp`);
         const data = await res.json();
+        resDiv.innerHTML = '';
         if (data && data.length > 0) {
-            const result = data[0];
-            map.setView([result.lat, result.lon], 14);
-            currentPeakName = result.display_name.split(',')[0];
-            document.getElementById('routeNameInput').value = currentPeakName + "ルート";
-            statusEl.textContent = `「${currentPeakName}」が見つかりました。`;
+            data.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'search-item';
+                const name = item.display_name.split(',')[0];
+                const sub = item.display_name.split(',').slice(1, 3).join(',');
+                div.innerHTML = `<strong>${name}</strong><br><small>${sub}</small>`;
+                div.onclick = () => selectLocation(item.lat, item.lon, name);
+                resDiv.appendChild(div);
+            });
         } else {
-            statusEl.textContent = "場所が見つかりませんでした。";
+            resDiv.innerHTML = '<div class="search-item">見つかりませんでした</div>';
         }
     } catch (e) {
-        statusEl.textContent = "検索エラーです。";
+        resDiv.innerHTML = '<div class="search-item">エラーが発生しました</div>';
     }
+}
+
+function selectLocation(lat, lon, name) {
+    map.setView([lat, lon], 14);
+    currentPeakName = name;
+    document.getElementById('routeNameInput').value = name + "ルート";
+    document.getElementById('searchResults').style.display = 'none';
+    statusEl.textContent = `「${name}」に移動しました。「取得」を押して登山道を表示してください。`;
 }
 
 function switchMode(mode) {

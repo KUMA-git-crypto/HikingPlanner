@@ -60,15 +60,23 @@ def fetch_from_overpass(query: str) -> dict:
                 break
     raise HTTPException(status_code=503, detail="Overpass API (all mirrors) unavailable. Please try again later.")
 
-def build_trail_data(osm_json: dict) -> dict:
     elements = osm_json.get("elements", [])
     nodes = {}  # str(id) -> [lat, lon]
     ways = []
+    peaks = [] # list of {id, lat, lon, name}
     
-    # 1. First pass: Collect all available nodes and way objects
+    # 1. First pass: Collect all available nodes, peaks, and way objects
     for el in elements:
         if el["type"] == "node" and "lat" in el:
-            nodes[str(el["id"])] = [el["lat"], el["lon"]]
+            nid_str = str(el["id"])
+            nodes[nid_str] = [el["lat"], el["lon"]]
+            if el.get("tags", {}).get("natural") == "peak":
+                peaks.append({
+                    "id": nid_str,
+                    "lat": el["lat"],
+                    "lon": el["lon"],
+                    "name": el.get("tags", {}).get("name", "山頂")
+                })
         elif el["type"] == "way":
             ways.append(el)
 
@@ -141,6 +149,7 @@ def build_trail_data(osm_json: dict) -> dict:
         "n": filtered_nodes, 
         "jn": list(junctions), 
         "th": list(trailheads),
+        "pk": peaks,
         "e": edges
     }
 
@@ -166,7 +175,8 @@ def fetch_area(
     query = (
         f"[out:json][timeout:60];"
         f"(way(around:{around})['highway'~'path|footway|track|steps|pedestrian'];"
-        f" way(around:{around})['highway'~'service|unclassified|residential'];);"
+        f" way(around:{around})['highway'~'service|unclassified|residential'];"
+        f" node(around:{around})['natural'='peak'];);"
         f"(._;>;);"
         f"out;"
     )
