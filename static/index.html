@@ -462,9 +462,7 @@ async function handleNodeClick(id, lat, lon) {
     // Fetch precise elevation from our GSI proxy
     let ele = 0;
     try {
-        const res = await fetch(`/get-elevation?lat=${lat}&lon=${lon}`);
-        const eData = await res.json();
-        ele = eData.elevation || 0;
+        ele = 0; // Skip elevation fetch as requested to ensure route creation completes
     } catch(e) { 
         // Fallback to OSM ele if available
         if (graphNodes[id + "_ele"]) ele = graphNodes[id + "_ele"];
@@ -680,16 +678,61 @@ function resetAll() {
 // ─── EXPORT ──────────────────────────────────────────────────────────────────
 async function exportRoute(format) {
     if (routeLines.length === 0) { alert('ルートがありません。'); return; }
+    
+    // 1. Generate smart default filename
+    let baseName = document.getElementById('searchInput').value;
+    
+    // If no search input, try to find the nearest peak name to the start point
+    if (!baseName && waypoints.length > 0) {
+        const start = waypoints[0];
+        let minD = Infinity;
+        let nearestPeak = "";
+        
+        // Use renderedPeaks or local peak data if available
+        // Note: Peak data is in the global graph state or we can iterate through nodeLayer
+        nodeLayer.eachLayer(layer => {
+            if (layer.options.className === 'peak-marker') {
+                const p = layer.getLatLng();
+                const d = haversine(start.lat, start.lon, p.lat, p.lng);
+                const tooltip = layer.getTooltip();
+                if (d < minD && tooltip) {
+                    minD = d;
+                    nearestPeak = tooltip.getContent();
+                }
+            }
+        });
+        if (nearestPeak && minD < 5000) { // within 5km
+            baseName = nearestPeak + "付近";
+        }
+    }
+    
+    if (!baseName) baseName = "HikingRoute";
+    
+    // Add current date/time to make it unique
+    const now = new Date();
+    const ts = now.getFullYear() + 
+               String(now.getMonth() + 1).padStart(2, '0') + 
+               String(now.getDate()).padStart(2, '0') + "_" +
+               String(now.getHours()).padStart(2, '0') + 
+               String(now.getMinutes()).padStart(2, '0');
+    
+    const defaultName = `${baseName}_${ts}`;
+    
+    // 2. Prompt user for filename (Works on Windows and Mobile)
+    const fileName = prompt("保存するファイル名を入力してください:", defaultName);
+    if (!fileName) return; // Cancelled
+    
     const allPoints = [];
     routeLines.forEach(line => {
         line.getLatLngs().forEach(ll => allPoints.push({ lat: ll.lat, lon: ll.lng }));
     });
-    const fileName = document.getElementById('searchInput').value || 'HikingRoute';
+    
     const res = await fetch(`/export/${format}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: fileName, points: allPoints })
     });
+    
     if (!res.ok) { alert('保存に失敗しました。'); return; }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
